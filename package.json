@@ -2,7 +2,7 @@
   "name": "gpt-forex-manager",
   "version": "0.1.0",
   "private": true,
-  "description": "AI assisted Forex paper trading dashboard powered by OpenAI and Alpha Vantage.",
+  "description": "AI assisted Forex paper trading dashboard powered by OpenAI, Alpha Vantage and Supabase memory.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@supabase/supabase-js": "latest",
     "lucide-react": "latest",
     "next": "latest",
     "react": "latest",

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Activity, Brain, ShieldCheck } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Activity, Brain, Database, ShieldCheck } from "lucide-react";
 import { AiAnalysis, Candle, MarketResponse } from "@/lib/types";
 import { calculateMarketStats, getPipSize } from "@/lib/market";
 
@@ -23,7 +23,28 @@ type PaperTrade = {
   lesson?: string;
 };
 
-const PAIRS = [["EUR", "USD"], ["GBP", "USD"], ["USD", "JPY"], ["USD", "CAD"], ["AUD", "USD"], ["NZD", "USD"], ["EUR", "JPY"], ["GBP", "JPY"]];
+type TradeResponse = {
+  enabled: boolean;
+  reason?: string;
+  trades?: PaperTrade[];
+};
+
+type AnalysisSaveResponse = {
+  enabled: boolean;
+  saved?: boolean;
+  reason?: string;
+};
+
+const PAIRS = [
+  ["EUR", "USD"],
+  ["GBP", "USD"],
+  ["USD", "JPY"],
+  ["USD", "CAD"],
+  ["AUD", "USD"],
+  ["NZD", "USD"],
+  ["EUR", "JPY"],
+  ["GBP", "JPY"]
+];
 
 function money(value: number) {
   return `${value.toFixed(2)} $ CAD`;
@@ -69,19 +90,103 @@ export default function HomePage() {
   const [trades, setTrades] = useState<PaperTrade[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [memoryEnabled, setMemoryEnabled] = useState(false);
+  const [memoryMessage, setMemoryMessage] = useState("Mémoire locale seulement");
+  const initializedRef = useRef(false);
+
+  async function saveTradesToCloud(nextTrades: PaperTrade[]) {
+    try {
+      const res = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trades: nextTrades })
+      });
+
+      const data = (await res.json()) as TradeResponse & { saved?: boolean };
+
+      if (data.enabled && data.saved) {
+        setMemoryEnabled(true);
+        setMemoryMessage(`Supabase connecté · ${nextTrades.length} trade(s) sauvegardés`);
+      } else if (data.reason) {
+        setMemoryEnabled(false);
+        setMemoryMessage(data.reason);
+      }
+    } catch {
+      setMemoryEnabled(false);
+      setMemoryMessage("Supabase non disponible · sauvegarde locale active");
+    }
+  }
+
+  async function saveAnalysisToCloud(nextAnalysis: AiAnalysis) {
+    try {
+      const res = await fetch("/api/analysis-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysis: nextAnalysis })
+      });
+      const data = (await res.json()) as AnalysisSaveResponse;
+
+      if (data.enabled && data.saved) {
+        setMemoryEnabled(true);
+        setMemoryMessage("Supabase connecté · analyse sauvegardée");
+      } else if (data.reason) {
+        setMemoryMessage(data.reason);
+      }
+    } catch {
+      setMemoryMessage("Analyse gardée localement seulement");
+    }
+  }
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("gpt-forex-paper-trades") || "[]";
-      setTrades(JSON.parse(saved) as PaperTrade[]);
-    } catch {
-      setTrades([]);
+    async function hydrateMemory() {
+      let localTrades: PaperTrade[] = [];
+
+      try {
+        localTrades = JSON.parse(localStorage.getItem("gpt-forex-paper-trades") || "[]") as PaperTrade[];
+        setTrades(localTrades);
+      } catch {
+        localTrades = [];
+        setTrades([]);
+      }
+
+      try {
+        const res = await fetch("/api/data", { cache: "no-store" });
+        const data = (await res.json()) as TradeResponse;
+
+        setMemoryEnabled(Boolean(data.enabled));
+
+        if (data.enabled && Array.isArray(data.trades)) {
+          if (data.trades.length > 0) {
+            setTrades(data.trades);
+            localStorage.setItem("gpt-forex-paper-trades", JSON.stringify(data.trades));
+            setMemoryMessage(`Supabase connecté · ${data.trades.length} trade(s) chargés`);
+          } else {
+            setMemoryMessage("Supabase connecté · aucun trade sauvegardé");
+            if (localTrades.length > 0) {
+              void saveTradesToCloud(localTrades);
+            }
+          }
+        } else {
+          setMemoryMessage(data.reason || "Mémoire locale seulement");
+        }
+      } catch {
+        setMemoryEnabled(false);
+        setMemoryMessage("Mémoire locale seulement");
+      } finally {
+        initializedRef.current = true;
+      }
     }
+
+    void hydrateMemory();
   }, []);
 
   useEffect(() => {
     localStorage.setItem("gpt-forex-paper-trades", JSON.stringify(trades));
-  }, [trades]);
+
+    if (initializedRef.current && memoryEnabled) {
+      void saveTradesToCloud(trades);
+    }
+  }, [trades, memoryEnabled]);
 
   async function loadMarket() {
     setBusy(true);
@@ -111,7 +216,11 @@ export default function HomePage() {
       });
       const data = await res.json();
       if (data.warning) setMessage(data.warning);
-      if (data.analysis) setAnalysis(data.analysis as AiAnalysis);
+      if (data.analysis) {
+        const nextAnalysis = data.analysis as AiAnalysis;
+        setAnalysis(nextAnalysis);
+        void saveAnalysisToCloud(nextAnalysis);
+      }
     } catch {
       setMessage("Erreur analyse IA.");
     } finally {
@@ -169,12 +278,27 @@ export default function HomePage() {
     );
   }
 
+  async function resetJournal() {
+    setTrades([]);
+    localStorage.removeItem("gpt-forex-paper-trades");
+
+    if (memoryEnabled) {
+      try {
+        await fetch("/api/data", { method: "DELETE" });
+        setMemoryMessage("Supabase connecté · journal vidé");
+      } catch {
+        setMemoryMessage("Journal local vidé · erreur Supabase");
+      }
+    }
+  }
+
   useEffect(() => {
     void loadMarket();
   }, []);
 
   const stats = useMemo(() => (market ? calculateMarketStats(market.candles) : null), [market]);
   const closed = trades.filter((trade) => trade.status === "CLOSED");
+  const open = trades.filter((trade) => trade.status === "OPEN");
   const pnl = closed.reduce((sum, trade) => sum + (trade.pnlCad || 0), 0);
   const winRate = closed.length ? (closed.filter((trade) => (trade.pnlCad || 0) > 0).length / closed.length) * 100 : 0;
   const actionClass = analysis?.action === "BUY" ? "buy" : analysis?.action === "SELL" ? "sell" : "hold";
@@ -186,8 +310,9 @@ export default function HomePage() {
           <span className="badge">AI Forex Paper Trading</span>
           <span className="badge">OpenAI</span>
           <span className="badge">Alpha Vantage</span>
+          <span className={`badge ${memoryEnabled ? "buy" : "hold"}`}><Database size={14} /> {memoryEnabled ? "Supabase Memory" : "Local Memory"}</span>
           <h1>GPT Forex <span>Manager</span></h1>
-          <p className="muted">Application IA pour analyser le Forex, proposer des setups, ouvrir des trades fictifs et apprendre des erreurs dans un journal local.</p>
+          <p className="muted">Application IA pour analyser le Forex, proposer des setups, ouvrir des trades fictifs et apprendre des erreurs dans un journal sauvegardé.</p>
           <div className="warning">Simulation seulement. Aucun trade réel. Aucun conseil financier.</div>
         </div>
         <div className="card">
@@ -198,6 +323,7 @@ export default function HomePage() {
             <div className="kpi"><div className="name">P/L fictif</div><div className={`value ${pnl >= 0 ? "green" : "red"}`}>{money(pnl)}</div></div>
             <div className="kpi"><div className="name">Win rate</div><div className="value yellow">{winRate.toFixed(0)} %</div></div>
           </div>
+          <p className="small">{memoryMessage}</p>
         </div>
       </section>
 
@@ -248,7 +374,12 @@ export default function HomePage() {
       <div style={{ height: 18 }} />
       <section className="card">
         <h2>Journal paper trading</h2>
-        <button className="btn secondary" onClick={() => setTrades([])}>Réinitialiser</button>
+        <div className="actions">
+          <span className="badge">Ouverts: {open.length}</span>
+          <span className="badge">Fermés: {closed.length}</span>
+          <span className={`badge ${memoryEnabled ? "buy" : "hold"}`}>{memoryEnabled ? "Cloud actif" : "Local actif"}</span>
+          <button className="btn secondary" onClick={resetJournal}>Réinitialiser</button>
+        </div>
         <div className="grid grid2" style={{ marginTop: 14 }}>
           {trades.length === 0 ? <p className="small">Aucun trade fictif.</p> : trades.map((trade) => <div className="trade" key={trade.id}>
             <b>{trade.side} {trade.pair}</b> <span className={`badge ${trade.status === "OPEN" ? "hold" : (trade.pnlCad || 0) >= 0 ? "buy" : "sell"}`}>{trade.status}</span>
