@@ -35,6 +35,36 @@ type AnalysisSaveResponse = {
   reason?: string;
 };
 
+type PredictionResultRow = {
+  id: string;
+  pair: string;
+  action: "BUY" | "SELL" | "HOLD" | "WAIT";
+  confidence: number;
+  horizon_minutes: number;
+  start_price: number;
+  end_price: number | null;
+  pips: number | null;
+  success: boolean | null;
+  status: "PENDING" | "DONE" | "ERROR";
+  predicted_at: string;
+  checked_at: string | null;
+};
+
+type WatchSummary = {
+  enabled?: boolean;
+  reason?: string;
+  summary?: {
+    total: number;
+    done: number;
+    pending: number;
+    wins: number;
+    losses: number;
+    successRate: number;
+    netPips: number;
+  };
+  rows?: PredictionResultRow[];
+};
+
 type WatchResponse = {
   ok?: boolean;
   ranAt?: string;
@@ -47,6 +77,7 @@ type WatchResponse = {
     saved?: { saved?: boolean; count?: number; reason?: string };
   }>;
   evaluation?: { checked?: number; updated?: number; reason?: string };
+  results?: WatchSummary;
   errors?: Array<{ pair: string; error: string }>;
 };
 
@@ -68,6 +99,11 @@ function money(value: number) {
 function price(value?: number | null) {
   if (value == null) return "—";
   return value.toFixed(value > 20 ? 3 : 5);
+}
+
+function pips(value?: number | null) {
+  if (value == null) return "—";
+  return `${value.toFixed(1)} pips`;
 }
 
 function timeLabel(value?: string | null) {
@@ -117,6 +153,7 @@ export default function HomePage() {
   const [lastRefresh, setLastRefresh] = useState<string | null>(null);
   const [watchBusy, setWatchBusy] = useState(false);
   const [watchResult, setWatchResult] = useState<WatchResponse | null>(null);
+  const [watchSummary, setWatchSummary] = useState<WatchSummary | null>(null);
   const initializedRef = useRef(false);
   const lastAnalyzedRefreshRef = useRef<string | null>(null);
 
@@ -163,6 +200,16 @@ export default function HomePage() {
     }
   }
 
+  async function loadWatchSummary() {
+    try {
+      const res = await fetch("/api/watch?mode=summary", { cache: "no-store" });
+      const data = (await res.json()) as WatchSummary;
+      setWatchSummary(data);
+    } catch {
+      setWatchSummary({ reason: "Résumé non disponible." });
+    }
+  }
+
   useEffect(() => {
     async function hydrateMemory() {
       let localTrades: PaperTrade[] = [];
@@ -204,6 +251,7 @@ export default function HomePage() {
     }
 
     void hydrateMemory();
+    void loadWatchSummary();
   }, []);
 
   useEffect(() => {
@@ -265,6 +313,8 @@ export default function HomePage() {
       setWatchResult(data);
       if (data.ok) {
         setMemoryMessage("Scan serveur terminé · prédictions sauvegardées/vérifiées");
+        setWatchSummary(data.results || null);
+        void loadWatchSummary();
       } else {
         setMessage("Le scan serveur n'a pas retourné ok:true.");
       }
@@ -311,13 +361,13 @@ export default function HomePage() {
       old.map((trade): PaperTrade => {
         if (trade.id !== id || trade.status === "CLOSED") return trade;
         const direction = trade.side === "BUY" ? 1 : -1;
-        const pips = ((market.price - trade.entry) / getPipSize(trade.pair)) * direction;
-        const pnlCad = pips;
+        const pipsValue = ((market.price - trade.entry) / getPipSize(trade.pair)) * direction;
+        const pnlCad = pipsValue;
         return {
           ...trade,
           status: "CLOSED",
           exit: market.price,
-          pips,
+          pips: pipsValue,
           pnlCad,
           lesson: pnlCad >= 0 ? "Setup gagnant: vérifier si la sortie aurait pu être optimisée." : "Setup perdant: revoir entrée, stop et confirmation."
         };
@@ -367,6 +417,8 @@ export default function HomePage() {
   const actionClass = analysis?.action === "BUY" ? "buy" : analysis?.action === "SELL" ? "sell" : "hold";
   const createdCount = watchResult?.created?.length || 0;
   const errorCount = watchResult?.errors?.length || 0;
+  const summary = watchSummary?.summary;
+  const rows = watchSummary?.rows || [];
 
   return (
     <main className="container">
@@ -442,13 +494,21 @@ export default function HomePage() {
       <div style={{ height: 18 }} />
       <section className="card">
         <h2>Scan serveur / résultats réels</h2>
-        <p className="small">Ce bouton appelle /api/watch. Il crée des prédictions avec les vraies données, puis vérifie celles qui sont arrivées à 5, 15, 30 ou 60 minutes.</p>
+        <p className="small">Ce panneau lit les prédictions sauvegardées dans Supabase et calcule le taux de réussite réel.</p>
         <div className="actions">
           <button className="btn green" onClick={runWatch} disabled={watchBusy}>{watchBusy ? "Scan en cours..." : "Lancer scan serveur"}</button>
+          <button className="btn secondary" onClick={loadWatchSummary}>Rafraîchir résultats</button>
           <span className="badge">Créées: {createdCount}</span>
           <span className="badge">Vérifiées: {watchResult?.evaluation?.updated || 0}</span>
           <span className={`badge ${errorCount === 0 ? "buy" : "sell"}`}>Erreurs: {errorCount}</span>
         </div>
+        <div className="grid grid4" style={{ marginTop: 14 }}>
+          <div className="kpi"><div className="name">Prédictions</div><div className="value">{summary?.total || 0}</div></div>
+          <div className="kpi"><div className="name">En attente</div><div className="value yellow">{summary?.pending || 0}</div></div>
+          <div className="kpi"><div className="name">Réussite réelle</div><div className={`value ${(summary?.successRate || 0) >= 50 ? "green" : "red"}`}>{(summary?.successRate || 0).toFixed(0)} %</div></div>
+          <div className="kpi"><div className="name">Pips nets</div><div className={`value ${(summary?.netPips || 0) >= 0 ? "green" : "red"}`}>{pips(summary?.netPips || 0)}</div></div>
+        </div>
+        {watchSummary?.reason && <p className="warning">{watchSummary.reason}</p>}
         {watchResult && <div className="grid grid2" style={{ marginTop: 14 }}>
           <div className="trade">
             <b>Dernier scan</b>
@@ -464,6 +524,13 @@ export default function HomePage() {
             <p className="small">{item.error}</p>
           </div>)}
         </div>}
+        <div className="grid grid2" style={{ marginTop: 14 }}>
+          {rows.length === 0 ? <p className="small">Aucun résultat réel encore. Lance un scan serveur, puis relance après 5 minutes.</p> : rows.slice(0, 12).map((row) => <div className="trade" key={row.id}>
+            <b>{row.pair}</b> <span className={`badge ${row.action === "BUY" ? "buy" : row.action === "SELL" ? "sell" : "hold"}`}>{row.action}</span> <span className={`badge ${row.status === "DONE" ? (row.success ? "buy" : "sell") : "hold"}`}>{row.status}</span>
+            <p className="small">Horizon {row.horizon_minutes} min · Confiance {row.confidence}% · Départ {price(row.start_price)} · Fin {price(row.end_price)}</p>
+            <p className="small">{pips(row.pips)} · {row.success == null ? "Résultat en attente" : row.success ? "Prédiction réussie" : "Prédiction ratée"}</p>
+          </div>)}
+        </div>
       </section>
 
       <div style={{ height: 18 }} />
