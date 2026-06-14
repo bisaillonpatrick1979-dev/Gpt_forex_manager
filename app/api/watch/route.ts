@@ -13,6 +13,21 @@ type WatchRow = {
   horizon_minutes: number;
 };
 
+type ResultRow = {
+  id: string;
+  pair: string;
+  action: "BUY" | "SELL" | "HOLD" | "WAIT";
+  confidence: number;
+  horizon_minutes: number;
+  start_price: number;
+  end_price: number | null;
+  pips: number | null;
+  success: boolean | null;
+  status: "PENDING" | "DONE" | "ERROR";
+  predicted_at: string;
+  checked_at: string | null;
+};
+
 function getPairs() {
   return (process.env.MARKET_WATCHLIST || "EUR/USD,GBP/USD,USD/JPY,USD/CAD")
     .split(",")
@@ -26,12 +41,14 @@ function getPairs() {
 }
 
 function isAllowed(request: NextRequest) {
-  const expected = process.env.WATCH_SECRET;
+  const expected = process.env.CRON_SECRET || process.env.WATCH_SECRET;
   if (!expected) return true;
 
+  const authHeader = request.headers.get("authorization");
   const headerSecret = request.headers.get("x-watch-secret");
   const querySecret = request.nextUrl.searchParams.get("secret");
-  return headerSecret === expected || querySecret === expected;
+
+  return authHeader === `Bearer ${expected}` || headerSecret === expected || querySecret === expected;
 }
 
 function scorePrediction(row: WatchRow, endPrice: number) {
@@ -69,6 +86,58 @@ async function fetchAnalysis(origin: string, market: MarketResponse) {
   const data = (await res.json()) as { analysis?: AiAnalysis };
   if (!data.analysis) throw new Error(`AI analysis missing for ${market.pair}`);
   return data.analysis;
+}
+
+async function getResultsSummary() {
+  const supabase = getSupabaseAdmin();
+  const status = getMemoryStatus();
+
+  if (!status.enabled || !supabase) {
+    return {
+      enabled: false,
+      reason: status.reason,
+      summary: { total: 0, done: 0, pending: 0, wins: 0, losses: 0, successRate: 0, netPips: 0 },
+      rows: [] as ResultRow[]
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("prediction_results")
+    .select("id,pair,action,confidence,horizon_minutes,start_price,end_price,pips,success,status,predicted_at,checked_at")
+    .eq("user_id", getAppUserId())
+    .order("predicted_at", { ascending: false })
+    .limit(100);
+
+  if (error) {
+    return {
+      enabled: true,
+      reason: error.message,
+      summary: { total: 0, done: 0, pending: 0, wins: 0, losses: 0, successRate: 0, netPips: 0 },
+      rows: [] as ResultRow[]
+    };
+  }
+
+  const rows = (data || []) as ResultRow[];
+  const doneRows = rows.filter((row) => row.status === "DONE");
+  const pendingRows = rows.filter((row) => row.status === "PENDING");
+  const wins = doneRows.filter((row) => row.success === true).length;
+  const losses = doneRows.filter((row) => row.success === false).length;
+  const netPips = doneRows.reduce((sum, row) => sum + Number(row.pips || 0), 0);
+  const successRate = doneRows.length ? (wins / doneRows.length) * 100 : 0;
+
+  return {
+    enabled: true,
+    summary: {
+      total: rows.length,
+      done: doneRows.length,
+      pending: pendingRows.length,
+      wins,
+      losses,
+      successRate,
+      netPips
+    },
+    rows
+  };
 }
 
 async function savePrediction(origin: string, market: MarketResponse, analysis: AiAnalysis) {
@@ -160,6 +229,13 @@ async function evaluateDue(origin: string) {
 }
 
 export async function GET(request: NextRequest) {
+  const mode = request.nextUrl.searchParams.get("mode") || "run";
+
+  if (mode === "summary") {
+    const summary = await getResultsSummary();
+    return NextResponse.json({ ok: true, mode, ...summary });
+  }
+
   if (!isAllowed(request)) {
     return NextResponse.json({ ok: false, error: "Not allowed" }, { status: 401 });
   }
@@ -181,13 +257,16 @@ export async function GET(request: NextRequest) {
   }
 
   const evaluation = await evaluateDue(origin);
+  const results = await getResultsSummary();
 
   return NextResponse.json({
     ok: true,
+    mode,
     ranAt: new Date().toISOString(),
     pairs: pairs.map((item) => item.pair),
     created,
     evaluation,
+    results,
     errors
   });
 }
