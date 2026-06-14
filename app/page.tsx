@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Brain, Database, ShieldCheck } from "lucide-react";
+import { Activity, Brain, Database, PlayCircle, RefreshCcw, ShieldCheck } from "lucide-react";
 import { AiAnalysis, Candle, MarketResponse } from "@/lib/types";
 import { calculateMarketStats, getPipSize } from "@/lib/market";
 
@@ -35,6 +35,21 @@ type AnalysisSaveResponse = {
   reason?: string;
 };
 
+type WatchResponse = {
+  ok?: boolean;
+  ranAt?: string;
+  pairs?: string[];
+  created?: Array<{
+    pair: string;
+    action: string;
+    confidence: number;
+    price: number;
+    saved?: { saved?: boolean; count?: number; reason?: string };
+  }>;
+  evaluation?: { checked?: number; updated?: number; reason?: string };
+  errors?: Array<{ pair: string; error: string }>;
+};
+
 const PAIRS = [
   ["EUR", "USD"],
   ["GBP", "USD"],
@@ -53,6 +68,11 @@ function money(value: number) {
 function price(value?: number | null) {
   if (value == null) return "—";
   return value.toFixed(value > 20 ? 3 : 5);
+}
+
+function timeLabel(value?: string | null) {
+  if (!value) return "—";
+  return new Date(value).toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function Chart({ candles }: { candles: Candle[] }) {
@@ -82,7 +102,7 @@ function Chart({ candles }: { candles: Candle[] }) {
 export default function HomePage() {
   const [from, setFrom] = useState("EUR");
   const [to, setTo] = useState("USD");
-  const [interval, setInterval] = useState("5min");
+  const [interval, setIntervalValue] = useState("5min");
   const [accountCad, setAccountCad] = useState(1000);
   const [notes, setNotes] = useState("");
   const [market, setMarket] = useState<MarketResponse | null>(null);
@@ -92,7 +112,13 @@ export default function HomePage() {
   const [message, setMessage] = useState("");
   const [memoryEnabled, setMemoryEnabled] = useState(false);
   const [memoryMessage, setMemoryMessage] = useState("Mémoire locale seulement");
+  const [liveMode, setLiveMode] = useState(false);
+  const [autoAnalyze, setAutoAnalyze] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState<string | null>(null);
+  const [watchBusy, setWatchBusy] = useState(false);
+  const [watchResult, setWatchResult] = useState<WatchResponse | null>(null);
   const initializedRef = useRef(false);
+  const lastAnalyzedRefreshRef = useRef<string | null>(null);
 
   async function saveTradesToCloud(nextTrades: PaperTrade[]) {
     try {
@@ -196,6 +222,8 @@ export default function HomePage() {
       const data = (await res.json()) as MarketResponse;
       setMarket(data);
       setAnalysis(null);
+      const now = new Date().toISOString();
+      setLastRefresh(now);
       if (data.warning) setMessage(data.warning);
     } catch {
       setMessage("Erreur marché.");
@@ -225,6 +253,25 @@ export default function HomePage() {
       setMessage("Erreur analyse IA.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function runWatch() {
+    setWatchBusy(true);
+    setMessage("");
+    try {
+      const res = await fetch("/api/watch", { cache: "no-store" });
+      const data = (await res.json()) as WatchResponse;
+      setWatchResult(data);
+      if (data.ok) {
+        setMemoryMessage("Scan serveur terminé · prédictions sauvegardées/vérifiées");
+      } else {
+        setMessage("Le scan serveur n'a pas retourné ok:true.");
+      }
+    } catch {
+      setMessage("Erreur pendant le scan serveur.");
+    } finally {
+      setWatchBusy(false);
     }
   }
 
@@ -296,12 +343,30 @@ export default function HomePage() {
     void loadMarket();
   }, []);
 
+  useEffect(() => {
+    if (!liveMode) return;
+    const timer = window.setInterval(() => {
+      void loadMarket();
+    }, 30000);
+
+    return () => window.clearInterval(timer);
+  }, [liveMode, from, to, interval]);
+
+  useEffect(() => {
+    if (!liveMode || !autoAnalyze || !market || !lastRefresh) return;
+    if (lastAnalyzedRefreshRef.current === lastRefresh) return;
+    lastAnalyzedRefreshRef.current = lastRefresh;
+    void analyze();
+  }, [liveMode, autoAnalyze, market, lastRefresh]);
+
   const stats = useMemo(() => (market ? calculateMarketStats(market.candles) : null), [market]);
   const closed = trades.filter((trade) => trade.status === "CLOSED");
   const open = trades.filter((trade) => trade.status === "OPEN");
   const pnl = closed.reduce((sum, trade) => sum + (trade.pnlCad || 0), 0);
   const winRate = closed.length ? (closed.filter((trade) => (trade.pnlCad || 0) > 0).length / closed.length) * 100 : 0;
   const actionClass = analysis?.action === "BUY" ? "buy" : analysis?.action === "SELL" ? "sell" : "hold";
+  const createdCount = watchResult?.created?.length || 0;
+  const errorCount = watchResult?.errors?.length || 0;
 
   return (
     <main className="container">
@@ -311,8 +376,9 @@ export default function HomePage() {
           <span className="badge">OpenAI</span>
           <span className="badge">Alpha Vantage</span>
           <span className={`badge ${memoryEnabled ? "buy" : "hold"}`}><Database size={14} /> {memoryEnabled ? "Supabase Memory" : "Local Memory"}</span>
+          <span className={`badge ${liveMode ? "buy" : "hold"}`}><PlayCircle size={14} /> {liveMode ? "LIVE ON" : "LIVE OFF"}</span>
           <h1>GPT Forex <span>Manager</span></h1>
-          <p className="muted">Application IA pour analyser le Forex, proposer des setups, ouvrir des trades fictifs et apprendre des erreurs dans un journal sauvegardé.</p>
+          <p className="muted">Application IA pour analyser le Forex, proposer des setups, ouvrir des trades fictifs et mesurer les prédictions avec de vraies données.</p>
           <div className="warning">Simulation seulement. Aucun trade réel. Aucun conseil financier.</div>
         </div>
         <div className="card">
@@ -329,13 +395,13 @@ export default function HomePage() {
 
       <section className="grid grid3">
         <div className="card">
-          <h2>Marché</h2>
+          <h2>Marché temps réel</h2>
           <label>Paire</label>
           <select className="select" value={`${from}/${to}`} onChange={(event) => { const [a, b] = event.target.value.split("/"); setFrom(a); setTo(b); }}>
             {PAIRS.map(([a, b]) => <option key={`${a}/${b}`}>{a}/{b}</option>)}
           </select>
           <label style={{ marginTop: 10 }}>Intervalle</label>
-          <select className="select" value={interval} onChange={(event) => setInterval(event.target.value)}>
+          <select className="select" value={interval} onChange={(event) => setIntervalValue(event.target.value)}>
             <option value="1min">1 minute</option>
             <option value="5min">5 minutes</option>
             <option value="15min">15 minutes</option>
@@ -343,13 +409,15 @@ export default function HomePage() {
             <option value="60min">60 minutes</option>
           </select>
           <div className="actions" style={{ marginTop: 14 }}>
-            <button className="btn" onClick={loadMarket} disabled={busy}>Rafraîchir</button>
+            <button className="btn" onClick={loadMarket} disabled={busy}><RefreshCcw size={16} /> Rafraîchir</button>
             <button className="btn secondary" onClick={analyze} disabled={busy || !market}>Analyser IA</button>
+            <button className={liveMode ? "btn green" : "btn secondary"} onClick={() => setLiveMode((value) => !value)}>{liveMode ? "Arrêter live" : "Démarrer live"}</button>
+            <button className={autoAnalyze ? "btn green" : "btn secondary"} onClick={() => setAutoAnalyze((value) => !value)}>{autoAnalyze ? "Analyse auto ON" : "Analyse auto OFF"}</button>
           </div>
           {message && <p className="warning">{message}</p>}
         </div>
-        <div className="card"><h2>Prix</h2><div className="kpi"><div className="name">{market?.pair || `${from}/${to}`}</div><div className="value">{price(market?.price)}</div></div><p className="small">Source: {market?.source || "—"}</p></div>
-        <div className="card"><h2>Mouvement</h2><div className="kpi"><div className="name">Variation</div><div className={`value ${stats && stats.change >= 0 ? "green" : "red"}`}>{stats ? `${stats.changePercent.toFixed(2)} %` : "—"}</div></div></div>
+        <div className="card"><h2>Prix</h2><div className="kpi"><div className="name">{market?.pair || `${from}/${to}`}</div><div className="value">{price(market?.price)}</div></div><p className="small">Source: {market?.source || "—"} · Refresh: {timeLabel(lastRefresh || market?.updatedAt)}</p></div>
+        <div className="card"><h2>Mouvement</h2><div className="kpi"><div className="name">Variation</div><div className={`value ${stats && stats.change >= 0 ? "green" : "red"}`}>{stats ? `${stats.changePercent.toFixed(2)} %` : "—"}</div></div><p className="small">Le mode live rafraîchit aux 30 secondes quand la page est ouverte.</p></div>
       </section>
 
       <div style={{ height: 18 }} />
@@ -362,13 +430,40 @@ export default function HomePage() {
       <section className="grid grid2">
         <div className="card">
           <h2><ShieldCheck size={22} /> Décision IA</h2>
-          {!analysis ? <p className="small">Clique Analyser IA.</p> : <>
+          {!analysis ? <p className="small">Clique Analyser IA ou démarre le mode live avec analyse auto.</p> : <>
             <span className={`badge ${actionClass}`}>Action: {analysis.action}</span><span className="badge">Confiance: {analysis.confidence}%</span><span className="badge">Risque max: {analysis.maxRiskPercent}%</span>
             <div className="grid grid3"><div className="kpi"><div className="name">Entrée</div><div className="value">{price(analysis.entry)}</div></div><div className="kpi"><div className="name">Stop</div><div className="value red">{price(analysis.stopLoss)}</div></div><div className="kpi"><div className="name">Profit</div><div className="value green">{price(analysis.takeProfit)}</div></div></div>
             <p>{analysis.marketBias}</p><p className="small">{analysis.finalDecision}</p><button className="btn green" onClick={openPaperTrade}>Ouvrir trade fictif</button>
           </>}
         </div>
         <div className="card"><h2>Agents spécialisés</h2>{analysis?.agents?.map((agent) => <div className="agent" key={agent.name}><b>{agent.name}</b><br /><span className="badge">{agent.vote} · {agent.confidence}%</span><p className="small">{agent.note}</p></div>) || <p className="small">Aucun agent chargé.</p>}</div>
+      </section>
+
+      <div style={{ height: 18 }} />
+      <section className="card">
+        <h2>Scan serveur / résultats réels</h2>
+        <p className="small">Ce bouton appelle /api/watch. Il crée des prédictions avec les vraies données, puis vérifie celles qui sont arrivées à 5, 15, 30 ou 60 minutes.</p>
+        <div className="actions">
+          <button className="btn green" onClick={runWatch} disabled={watchBusy}>{watchBusy ? "Scan en cours..." : "Lancer scan serveur"}</button>
+          <span className="badge">Créées: {createdCount}</span>
+          <span className="badge">Vérifiées: {watchResult?.evaluation?.updated || 0}</span>
+          <span className={`badge ${errorCount === 0 ? "buy" : "sell"}`}>Erreurs: {errorCount}</span>
+        </div>
+        {watchResult && <div className="grid grid2" style={{ marginTop: 14 }}>
+          <div className="trade">
+            <b>Dernier scan</b>
+            <p className="small">Heure: {timeLabel(watchResult.ranAt)} · Paires: {watchResult.pairs?.join(", ") || "—"}</p>
+            <p className="small">Évaluation: {watchResult.evaluation?.checked || 0} due · {watchResult.evaluation?.updated || 0} mise(s) à jour</p>
+          </div>
+          {(watchResult.created || []).map((item) => <div className="trade" key={`${item.pair}-${item.price}-${item.action}`}>
+            <b>{item.pair}</b> <span className={`badge ${item.action === "BUY" ? "buy" : item.action === "SELL" ? "sell" : "hold"}`}>{item.action}</span>
+            <p className="small">Prix {price(item.price)} · Confiance {item.confidence}% · sauvegarde: {item.saved?.saved ? "oui" : item.saved?.reason || "non"}</p>
+          </div>)}
+          {(watchResult.errors || []).map((item) => <div className="trade" key={`error-${item.pair}`}>
+            <b>{item.pair}</b> <span className="badge sell">ERREUR</span>
+            <p className="small">{item.error}</p>
+          </div>)}
+        </div>}
       </section>
 
       <div style={{ height: 18 }} />
