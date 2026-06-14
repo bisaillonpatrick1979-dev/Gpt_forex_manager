@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Brain, Database, PlayCircle, RefreshCcw, ShieldCheck } from "lucide-react";
+import { Activity, Brain, Database, ShieldCheck } from "lucide-react";
 import { AiAnalysis, Candle, MarketResponse } from "@/lib/types";
 import { calculateMarketStats, getPipSize } from "@/lib/market";
 
@@ -55,11 +55,6 @@ function price(value?: number | null) {
   return value.toFixed(value > 20 ? 3 : 5);
 }
 
-function timeLabel(value?: string) {
-  if (!value) return "—";
-  return new Date(value).toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
 function Chart({ candles }: { candles: Candle[] }) {
   const visible = candles.slice(-52);
   const high = Math.max(...visible.map((c) => c.high));
@@ -87,7 +82,7 @@ function Chart({ candles }: { candles: Candle[] }) {
 export default function HomePage() {
   const [from, setFrom] = useState("EUR");
   const [to, setTo] = useState("USD");
-  const [interval, setIntervalValue] = useState("5min");
+  const [interval, setInterval] = useState("5min");
   const [accountCad, setAccountCad] = useState(1000);
   const [notes, setNotes] = useState("");
   const [market, setMarket] = useState<MarketResponse | null>(null);
@@ -97,11 +92,7 @@ export default function HomePage() {
   const [message, setMessage] = useState("");
   const [memoryEnabled, setMemoryEnabled] = useState(false);
   const [memoryMessage, setMemoryMessage] = useState("Mémoire locale seulement");
-  const [liveMode, setLiveMode] = useState(false);
-  const [autoAnalyze, setAutoAnalyze] = useState(true);
-  const [lastRefresh, setLastRefresh] = useState<string | null>(null);
   const initializedRef = useRef(false);
-  const lastAnalyzedRefreshRef = useRef<string | null>(null);
 
   async function saveTradesToCloud(nextTrades: PaperTrade[]) {
     try {
@@ -205,8 +196,6 @@ export default function HomePage() {
       const data = (await res.json()) as MarketResponse;
       setMarket(data);
       setAnalysis(null);
-      const now = new Date().toISOString();
-      setLastRefresh(now);
       if (data.warning) setMessage(data.warning);
     } catch {
       setMessage("Erreur marché.");
@@ -307,22 +296,6 @@ export default function HomePage() {
     void loadMarket();
   }, []);
 
-  useEffect(() => {
-    if (!liveMode) return;
-    const timer = window.setInterval(() => {
-      void loadMarket();
-    }, 30000);
-
-    return () => window.clearInterval(timer);
-  }, [liveMode, from, to, interval]);
-
-  useEffect(() => {
-    if (!liveMode || !autoAnalyze || !market || !lastRefresh) return;
-    if (lastAnalyzedRefreshRef.current === lastRefresh) return;
-    lastAnalyzedRefreshRef.current = lastRefresh;
-    void analyze();
-  }, [liveMode, autoAnalyze, market, lastRefresh]);
-
   const stats = useMemo(() => (market ? calculateMarketStats(market.candles) : null), [market]);
   const closed = trades.filter((trade) => trade.status === "CLOSED");
   const open = trades.filter((trade) => trade.status === "OPEN");
@@ -338,9 +311,8 @@ export default function HomePage() {
           <span className="badge">OpenAI</span>
           <span className="badge">Alpha Vantage</span>
           <span className={`badge ${memoryEnabled ? "buy" : "hold"}`}><Database size={14} /> {memoryEnabled ? "Supabase Memory" : "Local Memory"}</span>
-          <span className={`badge ${liveMode ? "buy" : "hold"}`}><PlayCircle size={14} /> {liveMode ? "LIVE ON" : "LIVE OFF"}</span>
           <h1>GPT Forex <span>Manager</span></h1>
-          <p className="muted">Application IA pour analyser le Forex, proposer des setups, ouvrir des trades fictifs et apprendre des erreurs avec un mode live.</p>
+          <p className="muted">Application IA pour analyser le Forex, proposer des setups, ouvrir des trades fictifs et apprendre des erreurs dans un journal sauvegardé.</p>
           <div className="warning">Simulation seulement. Aucun trade réel. Aucun conseil financier.</div>
         </div>
         <div className="card">
@@ -357,13 +329,13 @@ export default function HomePage() {
 
       <section className="grid grid3">
         <div className="card">
-          <h2>Marché temps réel</h2>
+          <h2>Marché</h2>
           <label>Paire</label>
           <select className="select" value={`${from}/${to}`} onChange={(event) => { const [a, b] = event.target.value.split("/"); setFrom(a); setTo(b); }}>
             {PAIRS.map(([a, b]) => <option key={`${a}/${b}`}>{a}/{b}</option>)}
           </select>
           <label style={{ marginTop: 10 }}>Intervalle</label>
-          <select className="select" value={interval} onChange={(event) => setIntervalValue(event.target.value)}>
+          <select className="select" value={interval} onChange={(event) => setInterval(event.target.value)}>
             <option value="1min">1 minute</option>
             <option value="5min">5 minutes</option>
             <option value="15min">15 minutes</option>
@@ -371,15 +343,13 @@ export default function HomePage() {
             <option value="60min">60 minutes</option>
           </select>
           <div className="actions" style={{ marginTop: 14 }}>
-            <button className="btn" onClick={loadMarket} disabled={busy}><RefreshCcw size={16} /> Rafraîchir</button>
+            <button className="btn" onClick={loadMarket} disabled={busy}>Rafraîchir</button>
             <button className="btn secondary" onClick={analyze} disabled={busy || !market}>Analyser IA</button>
-            <button className={liveMode ? "btn green" : "btn secondary"} onClick={() => setLiveMode((value) => !value)}>{liveMode ? "Arrêter live" : "Démarrer live"}</button>
-            <button className={autoAnalyze ? "btn green" : "btn secondary"} onClick={() => setAutoAnalyze((value) => !value)}>{autoAnalyze ? "Analyse auto ON" : "Analyse auto OFF"}</button>
           </div>
           {message && <p className="warning">{message}</p>}
         </div>
-        <div className="card"><h2>Prix</h2><div className="kpi"><div className="name">{market?.pair || `${from}/${to}`}</div><div className="value">{price(market?.price)}</div></div><p className="small">Source: {market?.source || "—"} · Dernier refresh: {timeLabel(lastRefresh || market?.updatedAt)}</p></div>
-        <div className="card"><h2>Mouvement</h2><div className="kpi"><div className="name">Variation</div><div className={`value ${stats && stats.change >= 0 ? "green" : "red"}`}>{stats ? `${stats.changePercent.toFixed(2)} %` : "—"}</div></div><p className="small">Le mode live rafraîchit le prix aux 30 secondes quand la page est ouverte.</p></div>
+        <div className="card"><h2>Prix</h2><div className="kpi"><div className="name">{market?.pair || `${from}/${to}`}</div><div className="value">{price(market?.price)}</div></div><p className="small">Source: {market?.source || "—"}</p></div>
+        <div className="card"><h2>Mouvement</h2><div className="kpi"><div className="name">Variation</div><div className={`value ${stats && stats.change >= 0 ? "green" : "red"}`}>{stats ? `${stats.changePercent.toFixed(2)} %` : "—"}</div></div></div>
       </section>
 
       <div style={{ height: 18 }} />
@@ -392,7 +362,7 @@ export default function HomePage() {
       <section className="grid grid2">
         <div className="card">
           <h2><ShieldCheck size={22} /> Décision IA</h2>
-          {!analysis ? <p className="small">Clique Analyser IA ou démarre le mode live avec analyse auto.</p> : <>
+          {!analysis ? <p className="small">Clique Analyser IA.</p> : <>
             <span className={`badge ${actionClass}`}>Action: {analysis.action}</span><span className="badge">Confiance: {analysis.confidence}%</span><span className="badge">Risque max: {analysis.maxRiskPercent}%</span>
             <div className="grid grid3"><div className="kpi"><div className="name">Entrée</div><div className="value">{price(analysis.entry)}</div></div><div className="kpi"><div className="name">Stop</div><div className="value red">{price(analysis.stopLoss)}</div></div><div className="kpi"><div className="name">Profit</div><div className="value green">{price(analysis.takeProfit)}</div></div></div>
             <p>{analysis.marketBias}</p><p className="small">{analysis.finalDecision}</p><button className="btn green" onClick={openPaperTrade}>Ouvrir trade fictif</button>

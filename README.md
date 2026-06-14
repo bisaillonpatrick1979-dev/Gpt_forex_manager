@@ -10,18 +10,21 @@ This project is for education and simulation only. It does not execute real-mone
 
 Add these environment variables:
 
-- OPENAI_API_KEY
-- OPENAI_MODEL, example: gpt-4.1-mini
-- ALPHA_VANTAGE_API_KEY
-- NEXT_PUBLIC_SUPABASE_URL
-- SUPABASE_SERVER_KEY
-- APP_USER_ID, example: patrick-main
+```env
+OPENAI_API_KEY=sk-your-openai-key
+OPENAI_MODEL=gpt-4.1-mini
+ALPHA_VANTAGE_API_KEY=your-alpha-vantage-key
+
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+APP_USER_ID=patrick-main
+```
 
 ## Supabase setup
 
 1. Open Supabase.
 2. Go to SQL Editor.
-3. Paste and run docs/schema.sql.
+3. Paste and run `supabase/schema.sql`.
 4. Add the variables above in Vercel.
 5. Redeploy.
 
@@ -38,5 +41,7 @@ Add these environment variables:
 
 ## Run
 
+```bash
 npm install
 npm run dev
+```
