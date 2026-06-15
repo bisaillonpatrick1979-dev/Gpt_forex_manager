@@ -12,6 +12,20 @@ type IncomingCandle = {
   volume?: number | null;
 };
 
+type CandleRow = {
+  user_id: string;
+  pair: string;
+  interval: string;
+  source: string;
+  candle_time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number | null;
+  payload: Record<string, unknown>;
+};
+
 function normalizePair(pair: string) {
   const clean = pair.toUpperCase().replace(/[^A-Z/]/g, "");
   if (clean.includes("/")) return clean;
@@ -97,35 +111,34 @@ export async function POST(request: NextRequest) {
   const interval = body.interval || "1min";
   const source = body.source || "csv-import";
   const candles = Array.isArray(body.candles) ? body.candles : [];
+  const rows: CandleRow[] = [];
 
-  const rows = candles
-    .map((raw) => {
-      const candle: IncomingCandle = {
-        time: String(raw.time || raw.date || raw.datetime || raw.timestamp || ""),
-        open: toNumber(raw.open),
-        high: toNumber(raw.high),
-        low: toNumber(raw.low),
-        close: toNumber(raw.close),
-        volume: raw.volume == null ? null : toNumber(raw.volume)
-      };
+  for (const raw of candles) {
+    const candle: IncomingCandle = {
+      time: String(raw.time || raw.date || raw.datetime || raw.timestamp || ""),
+      open: toNumber(raw.open),
+      high: toNumber(raw.high),
+      low: toNumber(raw.low),
+      close: toNumber(raw.close),
+      volume: raw.volume == null ? null : toNumber(raw.volume)
+    };
 
-      if (!isValidCandle(candle)) return null;
+    if (!isValidCandle(candle)) continue;
 
-      return {
-        user_id: getAppUserId(),
-        pair,
-        interval,
-        source,
-        candle_time: new Date(candle.time).toISOString(),
-        open: candle.open,
-        high: candle.high,
-        low: candle.low,
-        close: candle.close,
-        volume: candle.volume ?? null,
-        payload: raw
-      };
-    })
-    .filter(Boolean);
+    rows.push({
+      user_id: getAppUserId(),
+      pair,
+      interval,
+      source,
+      candle_time: new Date(candle.time).toISOString(),
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume ?? null,
+      payload: raw
+    });
+  }
 
   if (rows.length === 0) {
     return NextResponse.json({ enabled: true, inserted: 0, error: "Aucune chandelle valide." }, { status: 400 });
