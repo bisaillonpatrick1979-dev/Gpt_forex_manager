@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAppUserId, getMemoryStatus, getSupabaseAdmin } from "@/lib/memory-store";
-import { AiAnalysis, MarketResponse } from "@/lib/types";
-import { getPipSize } from "@/lib/market";
+import { AiAnalysis, Candle, MarketResponse } from "@/lib/types";
+import { calculateMarketStats, detectTrend, generateDemoCandles, getPipSize, roundPrice } from "@/lib/market";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +51,135 @@ function isAllowed(request: NextRequest) {
   return authHeader === `Bearer ${expected}` || headerSecret === expected || querySecret === expected;
 }
 
+function parseAlpha(payload: Record<string, unknown>, interval: string): Candle[] {
+  const key = `Time Series FX (${interval})`;
+  const series = payload[key] as Record<string, Record<string, string>> | undefined;
+  if (!series) return [];
+
+  return Object.entries(series)
+    .map(([time, item]) => ({
+      time,
+      open: Number(item["1. open"]),
+      high: Number(item["2. high"]),
+      low: Number(item["3. low"]),
+      close: Number(item["4. close"])
+    }))
+    .filter((candle) => Number.isFinite(candle.close))
+    .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+}
+
+async function getMarketData(from: string, to: string, interval = "5min"): Promise<MarketResponse> {
+  const pair = `${from}/${to}`;
+  const key = process.env.ALPHA_VANTAGE_API_KEY;
+
+  if (key) {
+    try {
+      const url = new URL("https://www.alphavantage.co/query");
+      url.searchParams.set("function", "FX_INTRADAY");
+      url.searchParams.set("from_symbol", from);
+      url.searchParams.set("to_symbol", to);
+      url.searchParams.set("interval", interval);
+      url.searchParams.set("outputsize", "compact");
+      url.searchParams.set("apikey", key);
+
+      const res = await fetch(url.toString(), { cache: "no-store" });
+      const payload = (await res.json()) as Record<string, unknown>;
+      const candles = parseAlpha(payload, interval);
+
+      if (res.ok && candles.length >= 10) {
+        return {
+          pair,
+          from,
+          to,
+          interval,
+          price: candles.at(-1)!.close,
+          candles,
+          source: "alpha-vantage",
+          updatedAt: new Date().toISOString()
+        };
+      }
+    } catch {
+      // fallback below
+    }
+  }
+
+  const candles = generateDemoCandles(from, to);
+  return {
+    pair,
+    from,
+    to,
+    interval,
+    price: candles.at(-1)!.close,
+    candles,
+    source: "demo",
+    warning: key ? "Fallback demo: Alpha Vantage indisponible ou quota atteint." : "Mode demo: ajoute ALPHA_VANTAGE_API_KEY dans Vercel.",
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function localAnalysis(pair: string, candles: Candle[]): AiAnalysis {
+  const last = candles.at(-1)?.close || 1;
+  const trend = detectTrend(candles);
+  const stats = calculateMarketStats(candles);
+  const pip = getPipSize(pair);
+  const action = trend === "BULLISH" ? "BUY" : trend === "BEARISH" ? "SELL" : "HOLD";
+  const confidence = action === "HOLD" ? 48 : Math.min(78, Math.round(58 + Math.abs(stats.changePercent) * 8));
+  const stop = pip * 18;
+  const target = pip * 32;
+
+  return {
+    pair,
+    action,
+    confidence,
+    marketBias: trend === "BULLISH" ? "Biais haussier modéré." : trend === "BEARISH" ? "Biais baissier modéré." : "Marché neutre.",
+    entry: action === "HOLD" ? null : roundPrice(last),
+    stopLoss: action === "BUY" ? roundPrice(last - stop) : action === "SELL" ? roundPrice(last + stop) : null,
+    takeProfit: action === "BUY" ? roundPrice(last + target) : action === "SELL" ? roundPrice(last - target) : null,
+    riskScore: action === "HOLD" ? 45 : 58,
+    maxRiskPercent: 1,
+    agents: [
+      { name: "Market Structure Agent", vote: action, confidence, note: `Tendance détectée: ${trend}.` },
+      { name: "Risk Manager", vote: confidence >= 65 ? action : "WAIT", confidence: Math.max(35, confidence - 12), note: "Risque limité à 1% du capital fictif." },
+      { name: "Learning Agent", vote: "HOLD", confidence: 60, note: "Journaliser le résultat et apprendre après fermeture." }
+    ],
+    reasons: ["Signal basé sur structure courte et volatilité récente.", "Paper trading seulement.", "Aucune exécution réelle."],
+    risks: ["Données potentiellement retardées.", "Nouvelles économiques peuvent invalider le setup.", "Ne pas utiliser comme conseil financier."],
+    learningPlan: ["Comparer le résultat après 5, 15, 30 et 60 minutes.", "Noter si le stop était trop serré.", "Réduire la confiance des setups perdants répétitifs."],
+    finalDecision: action === "HOLD" ? "Attendre." : `Setup ${action} possible en simulation seulement.`
+  };
+}
+
+async function analyzeMarket(market: MarketResponse) {
+  const key = process.env.OPENAI_API_KEY;
+  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+
+  if (!key) return localAnalysis(market.pair, market.candles);
+
+  try {
+    const stats = calculateMarketStats(market.candles);
+    const prompt = `Analyse Forex paper trading. Paire ${market.pair}. Capital fictif 1000 CAD. Variation ${stats.changePercent.toFixed(3)}%. Chandelles: ${JSON.stringify(market.candles.slice(-50))}. Retourne seulement JSON avec: pair, action BUY SELL HOLD WAIT, confidence, marketBias, entry, stopLoss, takeProfit, riskScore, maxRiskPercent maximum 1, agents, reasons, risks, learningPlan, finalDecision. Aucune exécution réelle.`;
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model,
+        temperature: 0.25,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "Tu es un comité d'agents Forex. Paper trading seulement. Retourne JSON valide seulement." },
+          { role: "user", content: prompt }
+        ]
+      })
+    });
+
+    const payload = await res.json();
+    if (!res.ok) throw new Error("OpenAI error");
+    return JSON.parse(payload.choices?.[0]?.message?.content || "{}") as AiAnalysis;
+  } catch {
+    return localAnalysis(market.pair, market.candles);
+  }
+}
+
 function scorePrediction(row: WatchRow, endPrice: number) {
   const pipSize = getPipSize(row.pair);
   const rawPips = (endPrice - row.start_price) / pipSize;
@@ -62,30 +191,6 @@ function scorePrediction(row: WatchRow, endPrice: number) {
     pips: row.action === "HOLD" || row.action === "WAIT" ? rawPips : signedPips,
     success
   };
-}
-
-async function fetchMarket(origin: string, from: string, to: string) {
-  const res = await fetch(`${origin}/api/market?from=${from}&to=${to}&interval=5min`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Market fetch failed for ${from}/${to}`);
-  return (await res.json()) as MarketResponse;
-}
-
-async function fetchAnalysis(origin: string, market: MarketResponse) {
-  const res = await fetch(`${origin}/api/ai/analyze`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      pair: market.pair,
-      candles: market.candles,
-      accountCad: 1000,
-      notes: "Automated market watch. Paper trading only. No real trade execution."
-    })
-  });
-
-  if (!res.ok) throw new Error(`AI analysis failed for ${market.pair}`);
-  const data = (await res.json()) as { analysis?: AiAnalysis };
-  if (!data.analysis) throw new Error(`AI analysis missing for ${market.pair}`);
-  return data.analysis;
 }
 
 async function getResultsSummary() {
@@ -140,7 +245,7 @@ async function getResultsSummary() {
   };
 }
 
-async function savePrediction(origin: string, market: MarketResponse, analysis: AiAnalysis) {
+async function savePrediction(market: MarketResponse, analysis: AiAnalysis) {
   const supabase = getSupabaseAdmin();
   const status = getMemoryStatus();
 
@@ -187,7 +292,7 @@ async function savePrediction(origin: string, market: MarketResponse, analysis: 
   return { saved: true, count: rows.length };
 }
 
-async function evaluateDue(origin: string) {
+async function evaluateDue() {
   const supabase = getSupabaseAdmin();
   const status = getMemoryStatus();
 
@@ -207,7 +312,7 @@ async function evaluateDue(origin: string) {
 
   for (const row of (data || []) as WatchRow[]) {
     const [from, to] = row.pair.split("/");
-    const market = await fetchMarket(origin, from, to);
+    const market = await getMarketData(from, to);
     const score = scorePrediction(row, market.price);
 
     const { error: updateError } = await supabase
@@ -240,23 +345,22 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Not allowed" }, { status: 401 });
   }
 
-  const origin = request.nextUrl.origin;
   const pairs = getPairs();
   const created = [];
   const errors = [];
 
   for (const item of pairs) {
     try {
-      const market = await fetchMarket(origin, item.from, item.to);
-      const analysis = await fetchAnalysis(origin, market);
-      const saved = await savePrediction(origin, market, analysis);
-      created.push({ pair: item.pair, action: analysis.action, confidence: analysis.confidence, price: market.price, saved });
+      const market = await getMarketData(item.from, item.to);
+      const analysis = await analyzeMarket(market);
+      const saved = await savePrediction(market, analysis);
+      created.push({ pair: item.pair, action: analysis.action, confidence: analysis.confidence, price: market.price, source: market.source, saved });
     } catch (error) {
       errors.push({ pair: item.pair, error: error instanceof Error ? error.message : "Unknown error" });
     }
   }
 
-  const evaluation = await evaluateDue(origin);
+  const evaluation = await evaluateDue();
   const results = await getResultsSummary();
 
   return NextResponse.json({
