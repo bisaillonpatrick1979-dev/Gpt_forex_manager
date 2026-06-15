@@ -7,7 +7,7 @@ export type MarketResponse = {
   interval: string;
   price: number;
   candles: Candle[];
-  source: "alpha-vantage" | "demo";
+  source: "alpha-vantage" | "frankfurter-spot" | "demo";
   warning?: string;
   updatedAt: string;
 };
