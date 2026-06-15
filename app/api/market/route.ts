@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Candle, MarketResponse } from "@/lib/types";
 import { generateDemoCandles } from "@/lib/market";
+import { getAppUserId, getSupabaseAdmin } from "@/lib/memory-store";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,30 @@ function candlesAroundSpot(from: string, to: string, spot: number): Candle[] {
   }));
 }
 
+async function fetchHistory(pair: string, interval: string): Promise<Candle[]> {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from("market_candles")
+    .select("candle_time,open,high,low,close")
+    .eq("user_id", getAppUserId())
+    .eq("pair", pair)
+    .eq("interval", interval)
+    .order("candle_time", { ascending: false })
+    .limit(500);
+
+  if (error || !data) return [];
+
+  return data.reverse().map((row) => ({
+    time: String(row.candle_time),
+    open: Number(row.open),
+    high: Number(row.high),
+    low: Number(row.low),
+    close: Number(row.close)
+  })).filter((candle) => Number.isFinite(candle.close));
+}
+
 async function fetchFrankfurterSpot(from: string, to: string): Promise<number | null> {
   if (from === to) return 1;
   try {
@@ -56,6 +81,25 @@ export async function GET(request: NextRequest) {
   const interval = search.get("interval") || "5min";
   const pair = `${from}/${to}`;
   const key = process.env.ALPHA_VANTAGE_API_KEY;
+  const prefer = search.get("prefer") || "history";
+
+  if (prefer === "history") {
+    const historical = await fetchHistory(pair, interval);
+    if (historical.length > 0) {
+      const response: MarketResponse = {
+        pair,
+        from,
+        to,
+        interval,
+        price: historical.at(-1)!.close,
+        candles: historical,
+        source: "demo",
+        warning: "Chandelles historiques chargées depuis Supabase. Elles servent au backtest/entraînement sans consommer Alpha Vantage.",
+        updatedAt: new Date().toISOString()
+      };
+      return NextResponse.json(response);
+    }
+  }
 
   if (key) {
     try {
@@ -89,7 +133,7 @@ export async function GET(request: NextRequest) {
       price: spot,
       candles,
       source: "demo",
-      warning: "Prix spot réel disponible via Frankfurter, mais chandelles simulées autour du spot. Pour vraies chandelles intraday, il faut une source market data plus robuste.",
+      warning: "Prix spot réel disponible via Frankfurter, mais chandelles simulées autour du spot. Pour entraîner sans limite API, importe des CSV historiques dans Supabase.",
       updatedAt: new Date().toISOString()
     };
     return NextResponse.json(response);
