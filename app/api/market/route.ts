@@ -88,8 +88,8 @@ export async function GET(request: NextRequest) {
       interval,
       price: spot,
       candles,
-      source: "frankfurter-spot",
-      warning: "Prix courant réel disponible, mais chandelles simulées autour du spot. Pour vraies chandelles intraday, il faut une source market data plus robuste.",
+      source: "demo",
+      warning: "Prix spot réel disponible via Frankfurter, mais chandelles simulées autour du spot. Pour vraies chandelles intraday, il faut une source market data plus robuste.",
       updatedAt: new Date().toISOString()
     };
     return NextResponse.json(response);
