@@ -161,9 +161,9 @@ export async function runMasterAgent(input: MasterAgentInput): Promise<MasterAge
       maxOpenPositions: riskPolicy.maxOpenPositions,
       maxPairExposurePercent: riskPolicy.maxPairExposurePercent,
       maxLeverage: riskPolicy.maxLeverage,
-      stopLossRequired: riskPolicy.requireStopLoss,
-      independentRiskVetoRequired: riskPolicy.requireRiskVeto,
-      realBrokerEnabled: riskPolicy.realBrokerEnabled
+      stopLossRequired: true,
+      independentRiskVetoRequired: true,
+      realBrokerEnabled: false
     },
     tradeDecision: "NO_TRADE_DECISION"
   };
