@@ -1,82 +1,552 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Activity, Brain, Gauge, RefreshCcw, ShieldCheck, TrendingDown, TrendingUp } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Activity,
+  AlertTriangle,
+  BarChart3,
+  Brain,
+  CheckCircle2,
+  Database,
+  FileCheck2,
+  FlaskConical,
+  Gauge,
+  Network,
+  Play,
+  RefreshCcw,
+  ShieldCheck,
+  Target,
+  TrendingDown,
+  TrendingUp,
+  Unplug
+} from "lucide-react";
 import TradingViewCandleChart from "@/components/TradingViewCandleChart";
-import { MarketResponse } from "@/lib/types";
+import { firmModules, riskPolicy } from "@/lib/firm-config";
+import { AiAnalysis, MarketResponse } from "@/lib/types";
 
-const tabs = ["Dashboard", "Markets", "News & Sentiment", "Prediction Lab", "Paper Trading", "Agents IA", "Evolution & Learn", "Settings"];
+const tabs = [
+  "Vue d’ensemble",
+  "Marchés",
+  "Pipeline quant",
+  "Validation",
+  "Risque",
+  "Agents OpenAI",
+  "Journal",
+  "Paramètres"
+] as const;
+
 const pairs = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "AUD/USD", "NZD/USD", "EUR/JPY", "GBP/JPY"];
-const agents = ["Market Watcher", "Scalping Agent", "News Analyst", "Market Sentiment", "Risk Manager", "Execution Agent", "Learning Agent", "Strategy Evolution"];
-const newsItems = [
-  ["Annonce CPI US : Inflation à 3.4%", "Impact high", "Bearish biased"],
-  ["NFP US supérieur aux attentes", "Impact high", "Bullish biased"],
-  ["Calendrier FOMC attendu mercredi", "Impact high", "Neutral biased"],
-  ["La BCE envisage une baisse prudente", "Impact medium", "Bearish biased"]
-];
-const predictions = [
-  ["EUR/USD", "M15", "SELL", "82%", "WIN"],
-  ["NAS100", "M5", "BUY", "76%", "WIN"],
-  ["GBP/USD", "M1", "BUY", "65%", "LOSS"],
-  ["USD/JPY", "H1", "BUY", "88%", "EN ATTENTE"]
-];
-const rules = ["Filtre Volatilité Pré-CPI", "Confirmation EMA 50/200", "Refus de Trade Confidence < 70%", "Anti-Fomo Sentiment Extrême"];
+const intervals = [
+  ["1min", "M1"],
+  ["5min", "M5"],
+  ["15min", "M15"],
+  ["30min", "M30"],
+  ["60min", "H1"]
+] as const;
 
+const validationGates = [
+  ["Hypothèse écrite", "L’idée et la raison économique sont enregistrées avant le premier test."],
+  ["Données verrouillées", "La période hors-échantillon ne peut pas être utilisée pour optimiser."],
+  ["Coûts réalistes", "Spread, commission, slippage et remplissages défavorables sont inclus."],
+  ["Walk-forward", "Les paramètres sont réévalués chronologiquement sans regarder le futur."],
+  ["Stress tests", "Les frais, délais et volatilités sont aggravés pour tenter de casser la stratégie."],
+  ["Paper trading", "La stratégie doit survivre en temps réel avant toute discussion de capital réel."]
+];
+
+type Tab = (typeof tabs)[number];
 type ChartMode = "candles" | "bars" | "line" | "area";
-type Side = "BUY" | "SELL";
 
-function price(value?: number | null) { if (value == null) return "—"; return value.toFixed(value > 20 ? 3 : 5); }
-function cad(value: number) { return `${value.toLocaleString("en-CA", { maximumFractionDigits: 2 })} $ CAD`; }
+type RegistryAgent = {
+  key: string;
+  name: string;
+  role: string;
+  responsibility: string;
+  connectionEnvVar: string;
+  connected: boolean;
+  status: "configured" | "awaiting-agent";
+  mayExecuteOrders: boolean;
+};
+
+type RegistryResponse = {
+  architecture: string;
+  openAiApiConfigured: boolean;
+  connectedAgents: number;
+  totalAgents: number;
+  agents: RegistryAgent[];
+  generatedAt: string;
+};
+
+type PaperPlan = {
+  id: string;
+  createdAt: string;
+  pair: string;
+  side: "BUY" | "SELL";
+  riskCad: number;
+  riskPercent: number;
+  stopLoss: string;
+  takeProfit: string;
+  status: "DRAFT";
+};
+
+function formatPrice(value?: number | null) {
+  if (value == null) return "—";
+  return value.toFixed(value > 20 ? 3 : 5);
+}
+
+function cad(value: number) {
+  return `${value.toLocaleString("fr-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $ CA`;
+}
 
 export default function NexusV2Page() {
-  const [tab, setTab] = useState("Dashboard");
+  const [tab, setTab] = useState<Tab>("Vue d’ensemble");
   const [pair, setPair] = useState("EUR/USD");
   const [interval, setInterval] = useState("5min");
   const [mode, setMode] = useState<ChartMode>("candles");
   const [market, setMarket] = useState<MarketResponse | null>(null);
-  const [side, setSide] = useState<Side>("BUY");
-  const [volume, setVolume] = useState("1");
-  const [leverage, setLeverage] = useState("30");
+  const [registry, setRegistry] = useState<RegistryResponse | null>(null);
+  const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
+  const [analysisMode, setAnalysisMode] = useState("not-run");
+  const [status, setStatus] = useState("Système prêt. Aucune stratégie n’est encore certifiée.");
+  const [loading, setLoading] = useState(false);
+  const [side, setSide] = useState<"BUY" | "SELL">("BUY");
+  const [capital, setCapital] = useState("10000");
+  const [riskPercent, setRiskPercent] = useState(String(riskPolicy.maxRiskPerTradePercent));
   const [stopLoss, setStopLoss] = useState("");
   const [takeProfit, setTakeProfit] = useState("");
-  const [tick, setTick] = useState("2500");
-  const [volatility, setVolatility] = useState("3.8");
-  const [status, setStatus] = useState("Terminal prêt.");
+  const [plans, setPlans] = useState<PaperPlan[]>([]);
 
-  const balance = 10000;
-  const equity = 10000;
-  const margin = Number(volume || 0) * (market?.price || 1) * 100000 / Number(leverage || 1);
-  const freeMargin = Math.max(0, equity - margin);
-  const signal = (market?.candles?.at(-1)?.close || 0) >= (market?.candles?.[0]?.close || 0) ? "BUY" : "SELL";
+  const riskCad = useMemo(() => {
+    const parsedCapital = Math.max(0, Number(capital) || 0);
+    const parsedRisk = Math.min(riskPolicy.maxRiskPerTradePercent, Math.max(0, Number(riskPercent) || 0));
+    return parsedCapital * parsedRisk / 100;
+  }, [capital, riskPercent]);
 
   async function loadMarket() {
     const [from, to] = pair.split("/");
-    setStatus("Chargement du marché...");
+    setStatus("Chargement et contrôle de la source de marché...");
     try {
-      const res = await fetch(`/api/market?from=${from}&to=${to}&interval=${interval}`, { cache: "no-store" });
-      const data = await res.json() as MarketResponse;
+      const response = await fetch(`/api/market?from=${from}&to=${to}&interval=${interval}`, { cache: "no-store" });
+      const data = await response.json() as MarketResponse;
       setMarket(data);
-      setStatus(data.warning || `${data.pair} chargé depuis ${data.source}`);
-    } catch { setStatus("Erreur de chargement du marché."); }
+      setStatus(data.warning || `${data.pair} chargé depuis ${data.source}.`);
+    } catch {
+      setStatus("Le marché n’a pas pu être chargé. Aucun signal ne doit être utilisé.");
+    }
   }
-  useEffect(() => { void loadMarket(); }, [pair, interval]);
 
-  function Header() { return <div style={{ position: "sticky", top: 0, zIndex: 50, background: "rgba(15,23,42,.97)", borderBottom: "1px solid rgba(148,163,184,.18)", margin: "-18px -18px 18px", padding: "12px 18px" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 }}><div className="actions"><span className="badge buy">● Agent engines: active</span><span className="badge">Paper trading only</span></div><div className="actions"><button className="btn secondary" onClick={loadMarket} style={{ minHeight: 34, padding: "7px 12px" }}><RefreshCcw size={14} /> Next Tick</button><span className="badge">UTC {new Date().toISOString().slice(11, 19)}</span></div></div><div style={{ display: "grid", gridTemplateColumns: "minmax(280px,1.4fr) repeat(4,minmax(145px,.55fr))", gap: 12 }}><div className="card" style={{ padding: 14, boxShadow: "none" }}><h2 style={{ margin: 0 }}><Brain size={24} /> Laboratoire de Prédiction Forex / Nasdaq</h2><p className="small" style={{ margin: 0 }}>IA Multi-Agents & Simulation Quant</p></div><div className="kpi"><div className="name">Balance compte</div><div className="value small-value">{cad(balance)}</div></div><div className="kpi"><div className="name">Equity</div><div className="value small-value green">{cad(equity)}</div></div><div className="kpi"><div className="name">Marge utilisée</div><div className="value small-value yellow">{cad(margin)}</div></div><div className="kpi"><div className="name">Win rate</div><div className="value small-value">62%</div></div></div><div className="actions" style={{ flexWrap: "nowrap", overflowX: "auto", marginTop: 12 }}>{tabs.map((item) => <button key={item} onClick={() => setTab(item)} className={tab === item ? "btn green" : "btn secondary"} style={{ minHeight: 40, flex: "0 0 auto", padding: "8px 12px" }}>{item}</button>)}</div></div>; }
-  function ChartCard() { return <div className="card chart-card"><div className="chart-header"><div><h2>Nasdaq / Forex Monitor</h2><p className="small">Actif: {pair} · Source: {market?.source || "—"}</p></div><div className="indicator-actions"><span className="badge">Bougies</span><span className="badge">Bollinger</span><span className="badge">Fibonacci</span><span className="badge">Pivot S/R</span></div></div><TradingViewCandleChart candles={market?.candles || []} mode={mode} /><p className="warning" style={{ marginTop: 12 }}>{status}</p></div>; }
-  function PairList() { return <div className="card"><h2><Activity size={20} /> Watchlist</h2>{pairs.map((p) => <button key={p} className={pair === p ? "btn green" : "btn secondary"} onClick={() => setPair(p)} style={{ width: "100%", marginBottom: 8, justifyContent: "space-between" }}><span>{p}</span><span>{p === pair ? price(market?.price) : "—"}</span></button>)}</div>; }
-  function PaperTicket() { return <div className="card"><h2><ShieldCheck size={20} /> Passer un ordre PaperTrader</h2><div className="grid grid2"><button className={side === "BUY" ? "btn green" : "btn secondary"} onClick={() => setSide("BUY")}><TrendingUp size={16} /> Acheter</button><button className={side === "SELL" ? "btn red" : "btn secondary"} onClick={() => setSide("SELL")}><TrendingDown size={16} /> Vendeur</button></div><label>Lots</label><input className="input" value={volume} onChange={(e) => setVolume(e.target.value.replace(/[^0-9.]/g, ""))} /><label>Levier</label><input className="input" value={leverage} onChange={(e) => setLeverage(e.target.value.replace(/[^0-9]/g, ""))} /><div className="grid grid2"><div><label>Stop loss</label><input className="input" value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} placeholder="Optionnel" /></div><div><label>Take profit</label><input className="input" value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} placeholder="Optionnel" /></div></div><div className="grid grid2" style={{ marginTop: 12 }}><div className="kpi"><div className="name">Marge requise</div><div className="value small-value">{cad(margin)}</div></div><div className="kpi"><div className="name">Marge libre</div><div className="value small-value green">{cad(freeMargin)}</div></div></div><button className="btn green" style={{ width: "100%", marginTop: 14 }}>Négocier sur compte démo</button></div>; }
-  function FlowControl() { return <div className="card"><h2><Gauge size={20} /> Contrôle des Flux Infinis & Vitesse</h2><div className="warning">Défilement automatique · génération continue</div><label>Fréquence du tick: {tick} ms</label><input type="range" min="100" max="4000" value={tick} onChange={(e) => setTick(e.target.value)} style={{ width: "100%" }} /><label>Intensité volatilité: {volatility}x</label><input type="range" min="0.2" max="5" step="0.1" value={volatility} onChange={(e) => setVolatility(e.target.value)} style={{ width: "100%" }} /><div className="grid grid2" style={{ marginTop: 12 }}><div className="kpi"><div className="name">Automations</div><div className="value green">PLAY</div></div><div className="kpi"><div className="name">Flux</div><div className="value green">ON</div></div></div></div>; }
-  function Consensus() { return <div className="card"><h2>Consensus des agents</h2><div className="grid grid4"><div className="kpi"><div className="name">Signal</div><div className={`value ${signal === "BUY" ? "green" : "red"}`}>{signal}</div></div><div className="kpi"><div className="name">Confiance</div><div className="value">74%</div></div><div className="kpi"><div className="name">Risque</div><div className="value yellow">Moyen</div></div><div className="kpi"><div className="name">Mode</div><div className="value">Paper</div></div></div></div>; }
-  function NewsPanel() { return <section className="grid" style={{ gridTemplateColumns: "360px minmax(0,1fr)" }}><div className="card"><h2>Sentiment global</h2><div className="kpi"><div className="name">Index acheteur</div><div className="value yellow">39%</div></div><p className="small">Consolidation neutre. Le marché reste indécis avant les prochains communiqués macro.</p><button className="btn green" style={{ width: "100%" }}>Lancer l’analyse News Analyst IA</button></div><div className="card"><h2>Flux nouvelles macro</h2>{newsItems.map(([title, impact, bias]) => <div className="agent" key={title}><b>{title}</b><br /><span className="badge sell">{impact}</span><span className="badge">{bias}</span></div>)}</div></section>; }
-  function PredictionPanel() { return <section className="grid" style={{ gridTemplateColumns: "minmax(0,1fr) 360px" }}><div className="card"><h2>Archive des Prédictions Résolues</h2>{predictions.map(([m, tf, sig, conf, result]) => <div className="agent" key={`${m}-${tf}`} style={{ display: "grid", gridTemplateColumns: "1fr .8fr .8fr .8fr .9fr", gap: 10 }}><b>{m}</b><span>{tf}</span><span className={sig === "BUY" ? "green" : "red"}>{sig}</span><span>{conf}</span><span className={result === "WIN" ? "badge buy" : result === "LOSS" ? "badge sell" : "badge"}>{result}</span></div>)}</div><div className="card"><h2>Séquence Multi-Agents</h2><label>Actif de référence</label><select className="select" value={pair} onChange={(e) => setPair(e.target.value)}>{pairs.map((p) => <option key={p}>{p}</option>)}</select><label>Timeframe</label><select className="select" value={interval} onChange={(e) => setInterval(e.target.value)}><option value="1min">M1</option><option value="5min">M5</option><option value="15min">M15</option><option value="60min">H1</option></select><button className="btn green" style={{ width: "100%", marginTop: 12 }}>Lancer la séquence IA</button><Consensus /></div></section>; }
-  function LearningPanel() { return <section className="grid" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)" }}><div className="card"><h2>Logique des règles actives</h2>{rules.map((rule, i) => <div className="agent" key={rule}><span className={i < 3 ? "badge buy" : "badge"}>{i < 3 ? "ON" : "OBSERVE"}</span><b> {rule}</b><p className="small">Taux de résolution historique : {85 - i * 7}% · Utilisations : {22 + i * 13}</p></div>)}</div><div className="card"><h2>Registre d’apprentissage d’erreurs</h2>{["Glissement de spread ayant déclenché le stop loss prématurément", "Achat de contre-tendance M5 sans confirmation EMA 200", "Signal social trop spéculatif ignoré trop tard"].map((err) => <div className="agent" key={err}><span className="badge sell">Erreur détectée</span><p><b>{err}</b></p><div className="warning">Leçon apprise : attendre un pullback validé et réduire le levier avant news importantes.</div></div>)}</div></section>; }
+  async function loadRegistry() {
+    try {
+      const response = await fetch("/api/agents/registry", { cache: "no-store" });
+      const data = await response.json() as RegistryResponse;
+      setRegistry(data);
+    } catch {
+      setRegistry(null);
+    }
+  }
 
-  return <main className="container master-container"><Header />{tab === "Dashboard" && <><section className="card" style={{ marginBottom: 16 }}><span className="badge buy">Laboratoire de simulation active</span><span className="badge yellow">Era: Hyper2020</span><span className="badge buy">Automations: PLAY</span><span className="badge buy">Alertes de flux: ON</span></section><section className="grid" style={{ gridTemplateColumns: "minmax(0,2fr) 430px", marginBottom: 16 }}><ChartCard /><FlowControl /></section><section className="grid" style={{ gridTemplateColumns: "350px minmax(0,1fr)" }}><PaperTicket /><Consensus /></section></>}
-  {tab === "Markets" && <section className="grid" style={{ gridTemplateColumns: "320px minmax(0,1fr)" }}><PairList /><div><section className="card" style={{ marginBottom: 16 }}><h2>Contrôles marché</h2><div className="grid grid3"><div><label>Timeframe</label><select className="select" value={interval} onChange={(e) => setInterval(e.target.value)}><option value="1min">M1</option><option value="5min">M5</option><option value="15min">M15</option><option value="30min">M30</option><option value="60min">H1</option></select></div><div><label>Graphique</label><select className="select" value={mode} onChange={(e) => setMode(e.target.value as ChartMode)}><option value="candles">Candles</option><option value="bars">OHLC</option><option value="line">Line</option><option value="area">Area</option></select></div><div><label>Prix</label><div className="kpi"><div className="value small-value">{price(market?.price)}</div></div></div></div></section><ChartCard /></div></section>}
-  {tab === "News & Sentiment" && <NewsPanel />}
-  {tab === "Prediction Lab" && <PredictionPanel />}
-  {tab === "Evolution & Learn" && <LearningPanel />}
-  {tab === "Paper Trading" && <section className="grid" style={{ gridTemplateColumns: "380px minmax(0,1fr)" }}><PaperTicket /><div className="card"><h2>Positions ouvertes</h2><p className="muted">Aucune position ouverte pour l’instant. Le prochain branchement va sauvegarder les ordres dans Supabase.</p><Consensus /></div></section>}
-  {tab === "Agents IA" && <section className="grid" style={{ gridTemplateColumns: "360px minmax(0,1fr)" }}><div className="card"><h2>Agents</h2>{agents.map((a, i) => <div className="agent" key={a}><b>{a}</b><br /><span className={i < 4 ? "badge buy" : "badge"}>{i < 4 ? "ACTIVE" : "IDLE"}</span></div>)}</div><div className="card"><h2>Prompt système</h2><textarea className="textarea" defaultValue="Analyse le marché, identifie la structure, estime le risque, puis propose une décision paper trading seulement." /><button className="btn green" style={{ marginTop: 12 }}>Sauvegarder directives</button></div></section>}
-  {tab === "Settings" && <section className="card"><h2>Settings</h2><div className="grid grid3"><div className="agent"><b>Data source</b><p className="small">Supabase historique, Alpha Vantage, fallback local.</p></div><div className="agent"><b>Risk controls</b><p className="small">Levier, marge, stop loss obligatoire à venir.</p></div><div className="agent"><b>Interface</b><p className="small">Mode mobile compact et thème Nexus sombre.</p></div></div></section>}</main>;
+  async function runAnalysis() {
+    if (!market || market.candles.length < 10) {
+      setStatus("Pas assez de chandelles validées pour lancer une analyse.");
+      return;
+    }
+
+    setLoading(true);
+    setStatus("Analyse en cours. Le résultat ne peut produire aucun ordre réel.");
+    try {
+      const response = await fetch("/api/ai/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pair,
+          candles: market.candles,
+          accountCad: Number(capital) || 10000,
+          notes: "Architecture quant en mode paper-only. Le Risk Governor doit conserver son veto."
+        })
+      });
+      const payload = await response.json() as { analysis?: AiAnalysis; mode?: string; warning?: string; error?: string };
+      if (!response.ok || !payload.analysis) throw new Error(payload.error || "Analyse indisponible");
+      setAnalysis(payload.analysis);
+      setAnalysisMode(payload.mode || "unknown");
+      setStatus(payload.warning || "Analyse terminée. Elle doit encore passer les contrôles de risque et de validation.");
+    } catch {
+      setStatus("Échec de l’analyse. Aucune décision n’a été créée.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function createPaperPlan() {
+    const parsedRisk = Number(riskPercent) || 0;
+    if (!stopLoss.trim()) {
+      setStatus("Plan refusé : le stop loss est obligatoire.");
+      return;
+    }
+    if (parsedRisk <= 0 || parsedRisk > riskPolicy.maxRiskPerTradePercent) {
+      setStatus(`Plan refusé : le risque doit être entre 0 et ${riskPolicy.maxRiskPerTradePercent} %.`);
+      return;
+    }
+
+    const plan: PaperPlan = {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      pair,
+      side,
+      riskCad,
+      riskPercent: parsedRisk,
+      stopLoss: stopLoss.trim(),
+      takeProfit: takeProfit.trim(),
+      status: "DRAFT"
+    };
+    setPlans((current) => [plan, ...current].slice(0, 20));
+    setStatus("Brouillon paper créé. Il n’a pas été envoyé à un courtier.");
+  }
+
+  useEffect(() => {
+    void loadMarket();
+  }, [pair, interval]);
+
+  useEffect(() => {
+    void loadRegistry();
+    try {
+      const saved = window.localStorage.getItem("gpt-forex-paper-plans");
+      if (saved) setPlans(JSON.parse(saved) as PaperPlan[]);
+    } catch {
+      // A local journal is optional; the app remains usable without it.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("gpt-forex-paper-plans", JSON.stringify(plans));
+    } catch {
+      // Ignore unavailable local storage.
+    }
+  }, [plans]);
+
+  function Header() {
+    return (
+      <header className="firm-header">
+        <div className="firm-topline">
+          <div className="actions">
+            <span className="badge buy">Paper trading seulement</span>
+            <span className="badge sell">Courtier réel désactivé</span>
+            <span className="badge">0 stratégie certifiée</span>
+          </div>
+          <div className="actions">
+            <button className="btn secondary compact-button" onClick={() => { void loadMarket(); void loadRegistry(); }}>
+              <RefreshCcw size={15} /> Actualiser
+            </button>
+            <span className="badge">{pair} · {interval.toUpperCase()}</span>
+          </div>
+        </div>
+
+        <div className="firm-title-grid">
+          <div className="card firm-brand-card">
+            <div className="eyebrow">GPT Forex Manager</div>
+            <h1 className="firm-title">Quant Firm <span>Operating System</span></h1>
+            <p className="small">Recherche, validation, risque, portefeuille, exécution simulée et futurs agents OpenAI.</p>
+          </div>
+          <Metric title="Source marché" value={market?.source || "—"} tone={market?.source === "alpha-vantage" ? "green" : "yellow"} />
+          <Metric title="Agents connectés" value={`${registry?.connectedAgents || 0}/${registry?.totalAgents || 10}`} tone={(registry?.connectedAgents || 0) > 0 ? "green" : "yellow"} />
+          <Metric title="Risque / trade" value={`${riskPolicy.maxRiskPerTradePercent} % max`} tone="green" />
+          <Metric title="Perte quotidienne" value={`${riskPolicy.maxDailyLossPercent} % max`} tone="yellow" />
+        </div>
+
+        <nav className="firm-tabs" aria-label="Sections de la firme">
+          {tabs.map((item) => (
+            <button key={item} onClick={() => setTab(item)} className={tab === item ? "btn green" : "btn secondary"}>
+              {item}
+            </button>
+          ))}
+        </nav>
+      </header>
+    );
+  }
+
+  function Metric({ title, value, tone }: { title: string; value: string; tone?: string }) {
+    return <div className="kpi"><div className="name">{title}</div><div className={`value small-value ${tone || ""}`}>{value}</div></div>;
+  }
+
+  function SystemStatus() {
+    const dataIsSimulated = market?.source === "demo";
+    return (
+      <section className={`system-banner ${dataIsSimulated ? "system-banner-warning" : "system-banner-safe"}`}>
+        {dataIsSimulated ? <AlertTriangle size={20} /> : <CheckCircle2 size={20} />}
+        <div>
+          <b>{dataIsSimulated ? "Données non admissibles au trading réel" : "Source de marché connectée"}</b>
+          <div>{status}</div>
+        </div>
+      </section>
+    );
+  }
+
+  function MarketChart() {
+    return (
+      <div className="card chart-card">
+        <div className="chart-header">
+          <div>
+            <h2><BarChart3 size={20} /> Moniteur de marché</h2>
+            <p className="small">{pair} · Prix {formatPrice(market?.price)} · Mise à jour {market?.updatedAt ? new Date(market.updatedAt).toLocaleString("fr-CA") : "—"}</p>
+          </div>
+          <div className="indicator-actions">
+            <select className="select compact-select" value={mode} onChange={(event) => setMode(event.target.value as ChartMode)}>
+              <option value="candles">Chandelles</option>
+              <option value="bars">OHLC</option>
+              <option value="line">Ligne</option>
+              <option value="area">Zone</option>
+            </select>
+          </div>
+        </div>
+        <TradingViewCandleChart candles={market?.candles || []} mode={mode} />
+      </div>
+    );
+  }
+
+  function MarketControls() {
+    return (
+      <div className="card">
+        <h2><Activity size={20} /> Univers de recherche</h2>
+        <label>Paire</label>
+        <select className="select" value={pair} onChange={(event) => setPair(event.target.value)}>
+          {pairs.map((item) => <option key={item}>{item}</option>)}
+        </select>
+        <label>Horizon</label>
+        <select className="select" value={interval} onChange={(event) => setInterval(event.target.value)}>
+          {intervals.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+        </select>
+        <div className="system-list market-facts">
+          <div><b>Provenance</b><span>{market?.source || "—"}</span></div>
+          <div><b>Chandelles</b><span>{market?.candles.length || 0}</span></div>
+          <div><b>Usage permis</b><span>{market?.source === "demo" ? "Interface et essais" : "Recherche contrôlée"}</span></div>
+        </div>
+      </div>
+    );
+  }
+
+  function Pipeline() {
+    return (
+      <section>
+        <div className="pipeline-flow">
+          {firmModules.map((module, index) => (
+            <div className="pipeline-step" key={module.id}>
+              <span className="pipeline-number">{index + 1}</span>
+              <b>{module.name}</b>
+              <p>{module.mission}</p>
+              <div className="pipeline-gate">{module.gate}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  function AnalysisPanel() {
+    return (
+      <div className="card">
+        <div className="card-heading-row">
+          <div>
+            <h2><Brain size={20} /> Analyse contrôlée</h2>
+            <p className="small">Le moteur actuel est temporaire. Les spécialistes OpenAI seront branchés un par un.</p>
+          </div>
+          <button className="btn green" onClick={runAnalysis} disabled={loading || !market}>
+            <Play size={16} /> {loading ? "Analyse..." : "Lancer"}
+          </button>
+        </div>
+        {!analysis ? (
+          <div className="empty-state">Aucune analyse lancée. Aucun chiffre de performance inventé n’est affiché.</div>
+        ) : (
+          <div className="analysis-result">
+            <div className="grid grid4">
+              <Metric title="Action proposée" value={analysis.action} tone={analysis.action === "BUY" ? "green" : analysis.action === "SELL" ? "red" : "yellow"} />
+              <Metric title="Confiance" value={`${analysis.confidence} %`} />
+              <Metric title="Risque calculé" value={`${analysis.riskScore}/100`} tone="yellow" />
+              <Metric title="Moteur" value={analysisMode} />
+            </div>
+            <div className="analysis-copy">
+              <b>{analysis.marketBias}</b>
+              <p>{analysis.finalDecision}</p>
+              <div className="actions">
+                <span className="badge">Entrée {formatPrice(analysis.entry)}</span>
+                <span className="badge sell">Stop {formatPrice(analysis.stopLoss)}</span>
+                <span className="badge buy">Cible {formatPrice(analysis.takeProfit)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function RiskWorkbench() {
+    return (
+      <section className="grid risk-layout">
+        <div className="card">
+          <h2><ShieldCheck size={20} /> Politique de risque obligatoire</h2>
+          <div className="risk-policy-grid">
+            <Metric title="Risque par transaction" value={`${riskPolicy.maxRiskPerTradePercent} %`} tone="green" />
+            <Metric title="Perte quotidienne" value={`${riskPolicy.maxDailyLossPercent} %`} tone="yellow" />
+            <Metric title="Drawdown portefeuille" value={`${riskPolicy.maxPortfolioDrawdownPercent} %`} tone="yellow" />
+            <Metric title="Positions ouvertes" value={`${riskPolicy.maxOpenPositions} max`} />
+            <Metric title="Exposition par paire" value={`${riskPolicy.maxPairExposurePercent} % max`} />
+            <Metric title="Levier" value={`${riskPolicy.maxLeverage}× max`} tone="red" />
+          </div>
+          <div className="data-alert">Le Risk Governor conservera le droit de veto. Un agent de recherche ne pourra jamais désactiver ces limites.</div>
+        </div>
+
+        <div className="card">
+          <h2><Target size={20} /> Brouillon paper</h2>
+          <div className="grid grid2">
+            <button className={side === "BUY" ? "btn green" : "btn secondary"} onClick={() => setSide("BUY")}><TrendingUp size={16} /> Achat</button>
+            <button className={side === "SELL" ? "btn red" : "btn secondary"} onClick={() => setSide("SELL")}><TrendingDown size={16} /> Vente</button>
+          </div>
+          <label>Capital fictif en dollars canadiens</label>
+          <input className="input" inputMode="decimal" value={capital} onChange={(event) => setCapital(event.target.value.replace(/[^0-9.]/g, ""))} />
+          <label>Risque par transaction (%)</label>
+          <input className="input" inputMode="decimal" value={riskPercent} onChange={(event) => setRiskPercent(event.target.value.replace(/[^0-9.]/g, ""))} />
+          <div className="grid grid2">
+            <div><label>Stop loss obligatoire</label><input className="input" value={stopLoss} onChange={(event) => setStopLoss(event.target.value)} placeholder="Ex. 1.08420" /></div>
+            <div><label>Take profit</label><input className="input" value={takeProfit} onChange={(event) => setTakeProfit(event.target.value)} placeholder="Ex. 1.08950" /></div>
+          </div>
+          <div className="kpi risk-amount"><div className="name">Perte maximale planifiée</div><div className="value green">{cad(riskCad)}</div></div>
+          <button className="btn green full-button" onClick={createPaperPlan}><FileCheck2 size={17} /> Créer le brouillon paper</button>
+        </div>
+      </section>
+    );
+  }
+
+  function AgentRegistry() {
+    return (
+      <section>
+        <div className="card agent-registry-summary">
+          <div>
+            <h2><Network size={20} /> Architecture : directeur principal avec spécialistes</h2>
+            <p className="small">Chaque agent sera créé séparément dans OpenAI Platform, puis son identifiant sera ajouté comme variable serveur. Les identifiants ne seront jamais exposés dans le navigateur.</p>
+          </div>
+          <div className="actions">
+            <span className={registry?.openAiApiConfigured ? "badge buy" : "badge sell"}>{registry?.openAiApiConfigured ? "Clé OpenAI configurée" : "Clé OpenAI absente"}</span>
+            <span className="badge">{registry?.connectedAgents || 0} connecté(s)</span>
+          </div>
+        </div>
+        <div className="agent-registry-grid">
+          {(registry?.agents || []).map((agent, index) => (
+            <article className="agent-registry-card" key={agent.key}>
+              <div className="agent-card-topline">
+                <span className="pipeline-number">{index + 1}</span>
+                {agent.connected ? <CheckCircle2 className="green" size={20} /> : <Unplug className="yellow" size={20} />}
+              </div>
+              <h2>{agent.name}</h2>
+              <span className="badge">{agent.role}</span>
+              <p>{agent.responsibility}</p>
+              <code>{agent.connectionEnvVar}</code>
+              <div className={agent.connected ? "agent-status connected" : "agent-status waiting"}>{agent.connected ? "Configuré" : "À créer dans OpenAI Platform"}</div>
+            </article>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  function ValidationPanel() {
+    return (
+      <section className="grid validation-layout">
+        <div className="card">
+          <h2><FlaskConical size={20} /> Portes de validation</h2>
+          {validationGates.map(([title, description], index) => (
+            <div className="validation-row" key={title}>
+              <span>{index + 1}</span>
+              <div><b>{title}</b><p>{description}</p></div>
+              <strong>REQUIS</strong>
+            </div>
+          ))}
+        </div>
+        <div className="card">
+          <h2><Gauge size={20} /> État de certification</h2>
+          <div className="certification-zero">0</div>
+          <p className="muted">Aucune stratégie n’a encore réussi toutes les portes. L’application ne prétend donc pas posséder un avantage statistique.</p>
+          <div className="system-list">
+            <div><b>Backtests vérifiés</b><span>0</span></div>
+            <div><b>Walk-forward réussis</b><span>0</span></div>
+            <div><b>Stratégies en paper</b><span>0</span></div>
+            <div><b>Stratégies certifiées</b><span>0</span></div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  function JournalPanel() {
+    return (
+      <section className="card">
+        <div className="card-heading-row">
+          <div><h2><Database size={20} /> Journal local des brouillons</h2><p className="small">Ce journal ne représente pas des transactions exécutées.</p></div>
+          {plans.length > 0 && <button className="btn secondary compact-button" onClick={() => setPlans([])}>Effacer</button>}
+        </div>
+        {plans.length === 0 ? <div className="empty-state">Aucun brouillon paper enregistré.</div> : plans.map((plan) => (
+          <div className="journal-row" key={plan.id}>
+            <div><b>{plan.pair} · {plan.side}</b><p>{new Date(plan.createdAt).toLocaleString("fr-CA")}</p></div>
+            <span className="badge">Risque {plan.riskPercent} %</span>
+            <span className="badge sell">Stop {plan.stopLoss}</span>
+            <span className="badge buy">Cible {plan.takeProfit || "non définie"}</span>
+            <strong>{cad(plan.riskCad)}</strong>
+          </div>
+        ))}
+      </section>
+    );
+  }
+
+  function SettingsPanel() {
+    return (
+      <section className="grid grid2">
+        <div className="card">
+          <h2><Database size={20} /> Connexions actuelles</h2>
+          <div className="system-list">
+            <div><b>Alpha Vantage</b><span>{market?.source === "alpha-vantage" ? "Actif" : "Non confirmé"}</span></div>
+            <div><b>Supabase historique</b><span>{market?.warning?.includes("Supabase") ? "Actif" : "À vérifier"}</span></div>
+            <div><b>OpenAI API</b><span>{registry?.openAiApiConfigured ? "Configurée" : "Absente"}</span></div>
+            <div><b>Courtier réel</b><span>Bloqué</span></div>
+          </div>
+        </div>
+        <div className="card">
+          <h2><ShieldCheck size={20} /> Règles non négociables</h2>
+          <ul className="policy-list">
+            <li>Aucun agent ne possède directement les clés d’un courtier.</li>
+            <li>Les règles de risque restent dans du code déterministe.</li>
+            <li>Les sorties des agents sont structurées, journalisées et vérifiables.</li>
+            <li>Toute future exécution réelle exigera une phase séparée et une approbation explicite.</li>
+          </ul>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <main className="container master-container">
+      <Header />
+      <SystemStatus />
+
+      {tab === "Vue d’ensemble" && (
+        <>
+          <section className="grid overview-layout">
+            <MarketChart />
+            <div className="grid">
+              <MarketControls />
+              <AnalysisPanel />
+            </div>
+          </section>
+          <section className="section-block">
+            <div className="section-heading"><h2><Network size={20} /> Chaîne de décision de la firme</h2><span className="badge">Séparation stricte des responsabilités</span></div>
+            <Pipeline />
+          </section>
+        </>
+      )}
+
+      {tab === "Marchés" && <section className="grid markets-layout"><MarketControls /><MarketChart /></section>}
+      {tab === "Pipeline quant" && <Pipeline />}
+      {tab === "Validation" && <ValidationPanel />}
+      {tab === "Risque" && <RiskWorkbench />}
+      {tab === "Agents OpenAI" && <AgentRegistry />}
+      {tab === "Journal" && <JournalPanel />}
+      {tab === "Paramètres" && <SettingsPanel />}
+    </main>
+  );
 }
