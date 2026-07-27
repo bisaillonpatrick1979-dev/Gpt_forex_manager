@@ -22,37 +22,72 @@ GPT Forex Manager is a controlled quantitative research and paper-trading operat
 7. Simulated execution planning
 8. Performance monitoring and audit journal
 
+## Active multi-agent sequence
+
+```text
+Market data
+    ↓
+Deterministic diagnostics
+    ↓
+Agent 02 — Data Quality Agent
+    ↓ ACCEPT / RESTRICT / BLOCK
+Agent 01 — Quantitative Director
+    ↓
+Next specialists selected by the mandate
+```
+
+The Data Quality Agent always runs before the Quantitative Director. A `BLOCK` result prevents the Director from requesting any additional specialist.
+
 ## Agent 01 — Quantitative Director
 
-The first OpenAI Agents SDK agent is implemented at `/directeur`.
+The Quantitative Director is available at `/directeur`.
 
 It can:
 
 - turn a research request into a measurable mandate;
-- assess whether the available market data is suitable for research;
+- apply the mandatory Data Quality Agent verdict;
 - separate observed facts, hypotheses and unknowns;
 - select the specialist agents needed for the next phase;
-- return a typed, validated output;
-- use OpenAI tracing through the Agents SDK.
+- return typed, validated output.
 
 It cannot:
 
 - emit BUY or SELL;
 - choose an entry, stop, target or position size;
 - execute a real or paper order;
-- override the deterministic risk policy;
+- override data quality or deterministic risk controls;
 - promise returns or claim that an unvalidated strategy beats the market.
 
-The exact system instructions are documented in `docs/agents/01-directeur-quantitatif.md`.
+Instructions: `docs/agents/01-directeur-quantitatif.md`.
+
+## Agent 02 — Data Quality Agent
+
+The Data Quality Agent combines deterministic checks with a constrained OpenAI agent explanation.
+
+It checks:
+
+- candle count and numerical validity;
+- OHLC consistency;
+- duplicate and non-monotonic timestamps;
+- missing intervals;
+- data freshness;
+- extreme bar-to-bar returns;
+- source provenance;
+- synthetic versus historical versus live/delayed classification.
+
+Its deterministic decision is one of `ACCEPT`, `RESTRICT`, or `BLOCK`. Model output cannot upgrade or bypass that decision.
+
+Instructions: `docs/agents/02-data-quality.md`.
 
 ## OpenAI stored prompts
 
-The Quantitative Director works immediately from code instructions when `OPENAI_API_KEY` is configured. A prompt created and versioned in OpenAI Platform can later replace the code instructions without changing the API route.
+Both implemented agents work immediately from code instructions when `OPENAI_API_KEY` is configured. Versioned prompts created in OpenAI Platform can replace the code instructions without changing the API routes.
 
 ```env
 OPENAI_PROMPT_MASTER_ID=pmpt_...
 OPENAI_PROMPT_MASTER_VERSION=
-OPENAI_PROMPT_DATA_QUALITY_ID=
+OPENAI_PROMPT_DATA_QUALITY_ID=pmpt_...
+OPENAI_PROMPT_DATA_QUALITY_VERSION=
 OPENAI_PROMPT_MARKET_REGIME_ID=
 OPENAI_PROMPT_ALPHA_RESEARCH_ID=
 OPENAI_PROMPT_BACKTEST_AUDITOR_ID=
@@ -104,6 +139,8 @@ APP_USER_ID=patrick-main
 - Alpha Vantage Forex data when configured
 - Frankfurter real spot fallback with simulated candles
 - Local demo candle fallback
+- Deterministic market-data diagnostics
+- OpenAI Agents SDK Data Quality Agent
 - OpenAI Agents SDK Quantitative Director
 - Existing temporary OpenAI analysis endpoint with a deterministic local fallback
 - Local browser journal for paper-plan drafts
