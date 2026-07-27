@@ -3,7 +3,7 @@ import { agentCatalog, riskPolicy } from "@/lib/firm-config";
 
 export const dynamic = "force-dynamic";
 
-const implementedAgentKeys = new Set(["master", "data-quality"]);
+const implementedAgentKeys = new Set(["master", "data-quality", "market-regime"]);
 
 export async function GET() {
   const openAiApiConfigured = Boolean(process.env.OPENAI_API_KEY);
@@ -36,7 +36,7 @@ export async function GET() {
 
   return NextResponse.json({
     architecture: "deterministic-gates-with-manager-and-specialists",
-    activeSequence: ["data-quality", "master"],
+    activeSequence: ["data-quality", "market-regime", "master"],
     openAiApiConfigured,
     connectedAgents: agents.filter((agent) => agent.connected).length,
     implementedAgents: agents.filter((agent) => agent.sdkImplemented).length,
