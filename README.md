@@ -39,9 +39,11 @@ Deterministic research envelope
     ↓
 Agent 04 — Alpha Research Agent
     ↓ SPECIFICATION_ONLY hypotheses
-Agent 01 — Quantitative Director
+Deterministic backtest audit gate
     ↓
-Backtest Auditor + Compliance Journal only
+Agent 05 — Backtest Auditor
+    ↓ AWAITING / REJECTED / PRELIMINARY SURVIVOR
+Agent 01 — Quantitative Director
 ```
 
 The gates are sequential. A blocking result prevents downstream research. Alpha hypotheses cannot move directly to portfolio construction, risk approval or simulated execution.
@@ -52,10 +54,10 @@ The Quantitative Director is available at `/directeur`.
 
 It can:
 
-- turn completed research into a measurable validation mandate;
-- apply data-quality, market-regime and alpha-research restrictions;
-- separate observed facts, hypotheses and unknowns;
-- send compliant hypotheses to the Backtest Auditor and Compliance Journal;
+- turn completed research into a governance decision;
+- apply data-quality, market-regime, alpha-research and backtest-audit restrictions;
+- separate observed facts, hypotheses, actual evidence and missing evidence;
+- request portfolio, risk and journal only when the Backtest Auditor permits progression;
 - return typed, validated output.
 
 It cannot:
@@ -64,8 +66,8 @@ It cannot:
 - choose an entry, stop, target or position size;
 - execute a real or paper order;
 - override deterministic gates;
-- send an unvalidated hypothesis to portfolio, risk or execution;
-- promise returns or claim that an unvalidated strategy beats the market.
+- treat a preliminary candidate as proof of future profitability;
+- send an unvalidated hypothesis to execution.
 
 Instructions: `docs/agents/01-directeur-quantitatif.md`.
 
@@ -131,9 +133,32 @@ Every retained hypothesis remains `SPECIFICATION_ONLY`. Insufficient or syntheti
 
 Instructions: `docs/agents/04-alpha-research.md`.
 
+## Agent 05 — Backtest Auditor
+
+The Backtest Auditor is an adversarial reviewer. It audits each hypothesis specification, checks the completeness of any supplied backtest evidence and tries to identify why the apparent result may be false.
+
+It checks:
+
+- missing entry, exit or invalidation rules;
+- explicit lookahead or future-information language;
+- insufficient observations or simulated trades;
+- inadequate out-of-sample allocation;
+- missing chronological split or walk-forward tests;
+- omitted costs, spread or slippage;
+- excessive parameters;
+- missing multiple-testing correction;
+- instability, drawdown and weak out-of-sample evidence;
+- missing version, timestamp and data/code hash.
+
+Without a versioned evidence dossier, the result remains `AWAITING_BACKTEST_RESULTS`. The model cannot invent returns, Sharpe, drawdown or trade counts.
+
+A dossier that passes the conservative structural and numerical gates receives only `CANDIDATE_SURVIVED_PRELIMINARY`. This does not prove a durable edge or future return.
+
+Instructions: `docs/agents/05-backtest-auditor.md`.
+
 ## OpenAI stored prompts
 
-All four implemented agents work immediately from code instructions when `OPENAI_API_KEY` is configured. Versioned prompts created in OpenAI Platform can replace the code instructions without changing the API routes.
+All five implemented agents work immediately from code instructions when `OPENAI_API_KEY` is configured. Versioned prompts created in OpenAI Platform can replace the code instructions without changing the API routes.
 
 ```env
 OPENAI_PROMPT_MASTER_ID=pmpt_...
@@ -144,7 +169,8 @@ OPENAI_PROMPT_MARKET_REGIME_ID=pmpt_...
 OPENAI_PROMPT_MARKET_REGIME_VERSION=
 OPENAI_PROMPT_ALPHA_RESEARCH_ID=pmpt_...
 OPENAI_PROMPT_ALPHA_RESEARCH_VERSION=
-OPENAI_PROMPT_BACKTEST_AUDITOR_ID=
+OPENAI_PROMPT_BACKTEST_AUDITOR_ID=pmpt_...
+OPENAI_PROMPT_BACKTEST_AUDITOR_VERSION=
 OPENAI_PROMPT_PORTFOLIO_ID=
 OPENAI_PROMPT_RISK_ID=
 OPENAI_PROMPT_EXECUTION_ID=
@@ -196,9 +222,11 @@ APP_USER_ID=patrick-main
 - Deterministic market-data diagnostics
 - Deterministic market-regime diagnostics
 - Deterministic alpha-research envelope
+- Deterministic backtest audit gate
 - OpenAI Agents SDK Data Quality Agent
 - OpenAI Agents SDK Market Regime Agent
 - OpenAI Agents SDK Alpha Research Agent
+- OpenAI Agents SDK Backtest Auditor
 - OpenAI Agents SDK Quantitative Director
 - Existing temporary OpenAI analysis endpoint with a deterministic local fallback
 - Local browser journal for paper-plan drafts
@@ -213,4 +241,4 @@ npm run dev
 
 ## Important limitation
 
-A visually convincing interface is not evidence of an edge. Strategy performance must be established through out-of-sample tests, walk-forward validation, realistic costs, stress tests and live paper trading before any separate real-money phase is considered.
+A visually convincing interface is not evidence of an edge. Strategy performance must be established through reproducible out-of-sample tests, walk-forward validation, realistic costs, stress tests and live paper trading before any separate real-money phase is considered.
