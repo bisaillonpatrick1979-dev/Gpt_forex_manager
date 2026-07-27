@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Brain, CheckCircle2, ClipboardList, Database, Play, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Activity, Brain, CheckCircle2, ClipboardList, Database, Play, ShieldCheck, TriangleAlert } from "lucide-react";
 import { MarketResponse } from "@/lib/types";
 
 const specialistLabels: Record<string, string> = {
@@ -62,6 +62,22 @@ type DataAuditOutput = {
   tradeDecision: "NO_TRADE_DECISION";
 };
 
+type MarketRegimeOutput = {
+  regimeStatus: "USABLE" | "RESTRICTED" | "BLOCKED";
+  primaryRegime: "TREND_UP" | "TREND_DOWN" | "RANGE" | "HIGH_VOLATILITY" | "LOW_VOLATILITY" | "TRANSITIONAL" | "BLOCKED_BY_DATA";
+  trendRegime: "UP" | "DOWN" | "RANGE" | "TRANSITIONAL" | "BLOCKED";
+  volatilityRegime: "HIGH" | "NORMAL" | "LOW" | "UNKNOWN";
+  confidenceScore: number;
+  summary: string;
+  confirmedEvidence: string[];
+  uncertainties: string[];
+  admissibleStrategyFamilies: string[];
+  excludedStrategyFamilies: string[];
+  externalDataRequired: string[];
+  specialistsMayProceed: boolean;
+  tradeDecision: "NO_TRADE_DECISION";
+};
+
 type MasterResponse = {
   agent: string;
   mode: string;
@@ -79,6 +95,22 @@ type MasterResponse = {
       staleMinutes: number | null;
     };
     output: DataAuditOutput;
+  };
+  marketRegime: {
+    mode: string;
+    diagnostics: {
+      status: "USABLE" | "RESTRICTED" | "BLOCKED";
+      primaryRegime: string;
+      trendRegime: string;
+      volatilityRegime: string;
+      confidenceScore: number;
+      movingAverageSpreadBps: number | null;
+      slopeBpsPerBar: number | null;
+      efficiencyRatio: number | null;
+      volatilityRatio: number | null;
+      eventRisk: string;
+    };
+    output: MarketRegimeOutput;
   };
   output: MasterOutput;
   generatedAt: string;
@@ -102,6 +134,16 @@ function auditTone(status: DataAuditOutput["auditStatus"]) {
   if (status === "ACCEPT") return "green";
   if (status === "BLOCK") return "red";
   return "yellow";
+}
+
+function regimeTone(status: MarketRegimeOutput["regimeStatus"]) {
+  if (status === "USABLE") return "green";
+  if (status === "BLOCKED") return "red";
+  return "yellow";
+}
+
+function formatMetric(value: number | null, decimals = 2) {
+  return value == null ? "—" : value.toFixed(decimals);
 }
 
 export default function MasterAgentPanel({ pair, interval, capitalCad, market, apiConfigured }: Props) {
@@ -153,11 +195,11 @@ export default function MasterAgentPanel({ pair, interval, capitalCad, market, a
     <section className="card master-agent-console">
       <div className="card-heading-row">
         <div>
-          <h2><Brain size={21} /> Chaîne Agent 02 → Agent 01</h2>
-          <p className="small">Le Data Quality Agent audite les données en premier. Le Directeur reçoit ensuite son verdict et ne peut pas le contourner.</p>
+          <h2><Brain size={21} /> Chaîne Agents 02 → 03 → 01</h2>
+          <p className="small">La qualité des données et le régime de marché sont imposés avant que le Directeur puisse préparer un mandat.</p>
         </div>
         <div className="actions">
-          <span className={apiConfigured ? "badge buy" : "badge sell"}>{apiConfigured ? "2 agents OpenAI prêts" : "Clé OpenAI requise"}</span>
+          <span className={apiConfigured ? "badge buy" : "badge sell"}>{apiConfigured ? "3 agents OpenAI prêts" : "Clé OpenAI requise"}</span>
           <span className="badge">{pair} · {interval.toUpperCase()}</span>
         </div>
       </div>
@@ -172,7 +214,7 @@ export default function MasterAgentPanel({ pair, interval, capitalCad, market, a
       <div className="master-run-row">
         <div className="small">Capital fictif : {capitalCad.toLocaleString("fr-CA", { style: "currency", currency: "CAD" })}</div>
         <button className="btn green" onClick={runDirector} disabled={!canRun || loading}>
-          <Play size={16} /> {loading ? "Audit puis préparation du mandat..." : "Lancer la chaîne quant"}
+          <Play size={16} /> {loading ? "Audit, régime et mandat en cours..." : "Lancer la chaîne quant"}
         </button>
       </div>
 
@@ -185,7 +227,7 @@ export default function MasterAgentPanel({ pair, interval, capitalCad, market, a
             <div className="card-heading-row">
               <div>
                 <h2><Database size={20} /> Agent 02 — Data Quality Agent</h2>
-                <p className="small">Verdict déterministe appliqué avant le Directeur.</p>
+                <p className="small">Verdict déterministe appliqué avant toute classification.</p>
               </div>
               <span className={`badge ${auditTone(result.dataQuality.output.auditStatus)}`}>{result.dataQuality.output.auditStatus}</span>
             </div>
@@ -209,6 +251,40 @@ export default function MasterAgentPanel({ pair, interval, capitalCad, market, a
             {result.dataQuality.output.remediationSteps.length > 0 && (
               <div className="warning"><b>Corrections proposées :</b> {result.dataQuality.output.remediationSteps.join(" · ")}</div>
             )}
+          </div>
+
+          <div className="regime-result">
+            <div className="card-heading-row">
+              <div>
+                <h2><Activity size={20} /> Agent 03 — Market Regime Agent</h2>
+                <p className="small">Classification déterministe de la tendance et de la volatilité.</p>
+              </div>
+              <span className={`badge ${regimeTone(result.marketRegime.output.regimeStatus)}`}>{result.marketRegime.output.regimeStatus}</span>
+            </div>
+            <div className="grid grid4">
+              <div className="kpi"><div className="name">Régime principal</div><div className="value small-value">{result.marketRegime.output.primaryRegime}</div></div>
+              <div className="kpi"><div className="name">Tendance</div><div className="value small-value">{result.marketRegime.output.trendRegime}</div></div>
+              <div className="kpi"><div className="name">Volatilité</div><div className="value small-value yellow">{result.marketRegime.output.volatilityRegime}</div></div>
+              <div className="kpi"><div className="name">Confiance</div><div className="value">{result.marketRegime.output.confidenceScore}/100</div></div>
+            </div>
+            <p>{result.marketRegime.output.summary}</p>
+            <div className="regime-metrics">
+              <span>Écart MM : <b>{formatMetric(result.marketRegime.diagnostics.movingAverageSpreadBps, 2)} pb</b></span>
+              <span>Pente : <b>{formatMetric(result.marketRegime.diagnostics.slopeBpsPerBar, 3)} pb/barre</b></span>
+              <span>Efficacité : <b>{formatMetric(result.marketRegime.diagnostics.efficiencyRatio, 3)}</b></span>
+              <span>Ratio volatilité : <b>{formatMetric(result.marketRegime.diagnostics.volatilityRatio, 2)}</b></span>
+            </div>
+            <div className="grid grid2 master-detail-grid">
+              <div className="agent">
+                <h2><CheckCircle2 size={18} /> Familles admissibles</h2>
+                <ul>{result.marketRegime.output.admissibleStrategyFamilies.map((item) => <li key={item}>{item}</li>)}</ul>
+              </div>
+              <div className="agent">
+                <h2><TriangleAlert size={18} /> Familles exclues</h2>
+                <ul>{result.marketRegime.output.excludedStrategyFamilies.map((item) => <li key={item}>{item}</li>)}</ul>
+              </div>
+            </div>
+            <div className="warning"><b>Risque événementiel inconnu :</b> un calendrier économique fiable doit être ajouté avant toute conclusion liée aux annonces ou aux crises.</div>
           </div>
 
           <div className="grid grid4">
