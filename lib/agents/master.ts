@@ -3,6 +3,7 @@ import { z } from "zod";
 import { riskPolicy } from "@/lib/firm-config";
 import { DataQualityOutput } from "@/lib/agents/data-quality";
 import { MarketRegimeOutput } from "@/lib/agents/market-regime";
+import { AlphaResearchOutput } from "@/lib/agents/alpha-research";
 
 const SpecialistKeySchema = z.enum([
   "data-quality",
@@ -73,22 +74,24 @@ export type MasterAgentInput = {
   };
   dataAudit: DataQualityOutput;
   regimeAudit: MarketRegimeOutput;
+  alphaResearch: AlphaResearchOutput;
 };
 
 export const MASTER_AGENT_INSTRUCTIONS = `
 Tu es le Directeur quantitatif de GPT Forex Manager, une firme de recherche quantitative en mode paper trading seulement.
 
 MISSION
-Tu transformes une demande de recherche en mandat mesurable. Tu sélectionnes les prochains spécialistes, sépares les faits des hypothèses et établis la prochaine étape vérifiable.
+Tu transformes les travaux déjà réalisés en mandat de validation mesurable. Tu sépares les faits des hypothèses et établis la prochaine étape vérifiable.
 
 CHAÎNE OBLIGATOIRE
-Le Data Quality Agent et le Market Regime Agent ont déjà effectué leurs travaux. Leurs résultats sont fournis dans dataAudit et regimeAudit.
-- Tu dois respecter auditStatus, permittedUses, prohibitedUses et specialistsMayProceed de dataAudit.
-- Tu dois respecter regimeStatus, primaryRegime, admissibleStrategyFamilies, excludedStrategyFamilies et specialistsMayProceed de regimeAudit.
-- Si l'un des deux agents bloque la progression, mandateStatus doit être BLOCKED_MISSING_DATA et aucun autre spécialiste ne doit être demandé.
-- Si un agent impose RESTRICT ou RESTRICTED, tu limites le mandat aux usages et familles de stratégies permis.
-- Ne demande pas de nouveau data-quality ou market-regime dans requestedSpecialists : leurs travaux sont terminés.
-- Tu ne dois pas présenter le risque événementiel comme connu lorsque regimeAudit exige un calendrier économique externe.
+Le Data Quality Agent, le Market Regime Agent et l'Alpha Research Agent ont déjà terminé leurs travaux. Leurs résultats sont fournis dans dataAudit, regimeAudit et alphaResearch.
+- Tu dois respecter toutes leurs décisions, restrictions, exclusions et incertitudes.
+- Si l'un des trois agents bloque la progression, mandateStatus doit être BLOCKED_MISSING_DATA et aucun autre spécialiste ne doit être demandé.
+- Les hypothèses de alphaResearch sont uniquement des spécifications de recherche, jamais des stratégies validées.
+- Ne demande pas de nouveau data-quality, market-regime ou alpha-research.
+- À ce stade, les seuls spécialistes admissibles sont backtest-auditor et journal.
+- Portfolio Allocator, Risk Governor et Execution Planner restent interdits tant qu'un backtest hostile indépendant n'a pas été réussi.
+- Tu ne dois pas présenter le risque événementiel comme connu sans calendrier économique externe fiable.
 
 LIMITES ABSOLUES
 - Tu n'es pas un vendeur de signaux.
@@ -96,18 +99,17 @@ LIMITES ABSOLUES
 - Tu n'inventes jamais de performance, de probabilité ou de donnée manquante.
 - Tu n'émets jamais directement BUY, SELL, un prix d'entrée, un stop loss, une taille de position ou un ordre de courtier.
 - Tu refuses toute exécution réelle ou tentative de contourner une limite de risque.
-- Le Risk Governor conserve toujours un droit de veto indépendant.
+- Le Risk Governor conserve toujours un droit de veto indépendant pour les phases futures.
 
 MÉTHODE
-1. Reformule l'objectif en résultat mesurable.
-2. Applique les conclusions de qualité des données.
-3. Applique le régime déterministe et ses familles de stratégies admissibles.
+1. Reformule l'objectif comme un mandat de validation.
+2. Applique la qualité des données et le régime déterministe.
+3. Reprends uniquement les hypothèses conservées par l'Alpha Research Agent.
 4. Sépare faits observés, hypothèses et inconnues.
-5. Choisis uniquement les prochains spécialistes nécessaires parmi : alpha-research, backtest-auditor, portfolio, risk, execution, monitoring et journal.
-6. Énonce les questions auxquelles chaque phase doit répondre.
-7. Recopie exactement les limites de risque fournies par l'application.
-8. Termine par une prochaine étape concrète.
-9. tradeDecision doit toujours être NO_TRADE_DECISION.
+5. Prépare les questions auxquelles le Backtest Auditor devra répondre.
+6. Recopie exactement les limites de risque fournies par l'application.
+7. Termine par une prochaine étape de validation concrète.
+8. tradeDecision doit toujours être NO_TRADE_DECISION.
 
 POLITIQUE PERMANENTE
 - Mode paper-only.
@@ -159,7 +161,7 @@ function createMasterAgent() {
 export async function runMasterAgent(input: MasterAgentInput): Promise<MasterAgentOutput> {
   const agent = createMasterAgent();
   const result = await run(agent, JSON.stringify({
-    task: "Préparer un mandat quantitatif sans prendre de décision de transaction.",
+    task: "Préparer un mandat de validation sans prendre de décision de transaction.",
     input,
     immutableRiskPolicy: riskPolicy
   }));
@@ -167,33 +169,35 @@ export async function runMasterAgent(input: MasterAgentInput): Promise<MasterAge
   const parsed = MasterAgentOutputSchema.parse(result.finalOutput);
   const dataBlocked = input.dataAudit.auditStatus === "BLOCK" || !input.dataAudit.specialistsMayProceed;
   const regimeBlocked = input.regimeAudit.regimeStatus === "BLOCKED" || !input.regimeAudit.specialistsMayProceed;
-  const workflowBlocked = dataBlocked || regimeBlocked;
+  const alphaBlocked = input.alphaResearch.researchStatus === "BLOCKED" || !input.alphaResearch.specialistsMayProceed;
+  const workflowBlocked = dataBlocked || regimeBlocked || alphaBlocked;
   const dataQualityStatus = input.dataAudit.auditStatus === "ACCEPT"
     ? "ACCEPTABLE_FOR_RESEARCH" as const
     : input.dataAudit.auditStatus === "RESTRICT"
       ? "SIMULATION_ONLY" as const
       : "INSUFFICIENT" as const;
 
+  const hypothesisDescriptions = input.alphaResearch.hypotheses.map(
+    (hypothesis) => `${hypothesis.hypothesisId} — ${hypothesis.title} [${hypothesis.family}]`
+  );
+
   return {
     ...parsed,
-    mandateStatus: workflowBlocked ? "BLOCKED_MISSING_DATA" : parsed.mandateStatus,
+    mandateStatus: workflowBlocked ? "BLOCKED_MISSING_DATA" : "READY_FOR_SPECIALISTS",
     observedFacts: uniqueLimited([
       ...input.dataAudit.confirmedFindings,
       `Régime déterministe : ${input.regimeAudit.primaryRegime}.`,
       `Tendance : ${input.regimeAudit.trendRegime}; volatilité : ${input.regimeAudit.volatilityRegime}.`,
       `Confiance de classification : ${input.regimeAudit.confidenceScore} sur 100.`,
+      `${input.alphaResearch.hypotheses.length} hypothèse(s) conforme(s) conservée(s) par l'Alpha Research Agent.`,
       ...input.regimeAudit.confirmedEvidence,
       ...parsed.observedFacts
     ], 12),
-    hypothesesToTest: workflowBlocked
-      ? []
-      : uniqueLimited([
-          ...input.regimeAudit.admissibleStrategyFamilies.map((family) => `Tester une hypothèse appartenant à la famille : ${family}.`),
-          ...parsed.hypothesesToTest
-        ], 12),
+    hypothesesToTest: workflowBlocked ? [] : hypothesisDescriptions.slice(0, 12),
     unknowns: uniqueLimited([
       ...input.regimeAudit.uncertainties,
       ...input.regimeAudit.externalDataRequired.map((item) => `Donnée externe requise : ${item}.`),
+      ...input.alphaResearch.uncertainties,
       ...parsed.unknowns
     ], 12),
     dataQuality: {
@@ -204,19 +208,31 @@ export async function runMasterAgent(input: MasterAgentInput): Promise<MasterAge
         ...input.dataAudit.unresolvedRisks
       ], 10)
     },
-    requestedSpecialists: workflowBlocked
+    requestedSpecialists: workflowBlocked ? [] : ["backtest-auditor", "journal"],
+    researchQuestions: workflowBlocked
       ? []
-      : parsed.requestedSpecialists.filter((key) => key !== "data-quality" && key !== "market-regime"),
+      : uniqueLimited([
+          "Chaque hypothèse survit-elle à une séparation chronologique stricte et à un test hors échantillon?",
+          "Les résultats résistent-ils aux coûts, au spread et au glissement réalistes?",
+          "Les paramètres restent-ils stables dans plusieurs sous-périodes et régimes voisins?",
+          "Le nombre d'essais et le biais de sélection ont-ils été correctement pénalisés?",
+          "Les critères d'invalidation définis avant le test sont-ils respectés?",
+          ...parsed.researchQuestions
+        ], 12),
     prohibitedActions: uniqueLimited([
       ...input.dataAudit.prohibitedUses,
       ...input.regimeAudit.excludedStrategyFamilies.map((family) => `Famille exclue dans ce régime : ${family}.`),
+      "Utiliser une hypothèse comme signal de transaction.",
+      "Passer au portefeuille, au risque ou à l'exécution avant l'audit hostile du backtest.",
       ...parsed.prohibitedActions
     ], 12),
     nextStep: dataBlocked
       ? input.dataAudit.remediationSteps[0] || "Corriger les données et relancer le Data Quality Agent."
       : regimeBlocked
-        ? "Corriger le blocage du régime avant d'appeler les agents de recherche."
-        : parsed.nextStep,
+        ? "Corriger le blocage du régime avant de poursuivre la recherche."
+        : alphaBlocked
+          ? input.alphaResearch.nextStep
+          : "Transmettre les spécifications conservées au Backtest Auditor et journaliser leurs versions avant tout test.",
     riskConstraints: {
       mode: riskPolicy.mode,
       baseCurrency: riskPolicy.baseCurrency,
