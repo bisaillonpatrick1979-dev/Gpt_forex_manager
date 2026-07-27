@@ -69,10 +69,12 @@ export async function POST(request: NextRequest) {
       }
     });
 
+    const usesStoredPrompt = Boolean(process.env.OPENAI_PROMPT_MASTER_ID);
+
     return NextResponse.json({
       agent: "Directeur quantitatif",
-      mode: process.env.OPENAI_PROMPT_MASTER_ID ? "stored-prompt" : "code-instructions",
-      model: process.env.OPENAI_AGENT_MODEL || process.env.OPENAI_MODEL || "gpt-5.1",
+      mode: usesStoredPrompt ? "stored-prompt" : "code-instructions",
+      model: usesStoredPrompt ? "Défini dans OpenAI Platform" : process.env.OPENAI_AGENT_MODEL || "gpt-5.1",
       output,
       generatedAt: new Date().toISOString()
     });
