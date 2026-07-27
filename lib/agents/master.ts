@@ -146,15 +146,7 @@ export async function runMasterAgent(input: MasterAgentInput): Promise<MasterAge
     task: "Préparer un mandat quantitatif sans prendre de décision de transaction.",
     input,
     immutableRiskPolicy: riskPolicy
-  }), {
-    workflowName: "GPT Forex Manager / Directeur quantitatif",
-    traceMetadata: {
-      pair: input.pair,
-      interval: input.interval,
-      marketSource: input.market.source,
-      mode: riskPolicy.mode
-    }
-  });
+  }));
 
   const parsed = MasterAgentOutputSchema.parse(result.finalOutput);
 
