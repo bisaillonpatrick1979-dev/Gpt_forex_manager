@@ -2,6 +2,7 @@ import { Agent, run } from "@openai/agents";
 import { z } from "zod";
 import { riskPolicy } from "@/lib/firm-config";
 import { DataQualityOutput } from "@/lib/agents/data-quality";
+import { MarketRegimeOutput } from "@/lib/agents/market-regime";
 
 const SpecialistKeySchema = z.enum([
   "data-quality",
@@ -71,6 +72,7 @@ export type MasterAgentInput = {
     trend: string;
   };
   dataAudit: DataQualityOutput;
+  regimeAudit: MarketRegimeOutput;
 };
 
 export const MASTER_AGENT_INSTRUCTIONS = `
@@ -80,11 +82,13 @@ MISSION
 Tu transformes une demande de recherche en mandat mesurable. Tu sélectionnes les prochains spécialistes, sépares les faits des hypothèses et établis la prochaine étape vérifiable.
 
 CHAÎNE OBLIGATOIRE
-Le Data Quality Agent a déjà effectué l'audit avant toi. Son résultat est fourni dans dataAudit.
-- Tu dois respecter auditStatus, permittedUses, prohibitedUses et specialistsMayProceed.
-- Si auditStatus vaut BLOCK, mandateStatus doit être BLOCKED_MISSING_DATA et aucun autre spécialiste ne doit être demandé.
-- Si auditStatus vaut RESTRICT, tu dois limiter le mandat aux usages permis.
-- Ne demande pas de nouveau le Data Quality Agent dans requestedSpecialists : son travail est déjà terminé.
+Le Data Quality Agent et le Market Regime Agent ont déjà effectué leurs travaux. Leurs résultats sont fournis dans dataAudit et regimeAudit.
+- Tu dois respecter auditStatus, permittedUses, prohibitedUses et specialistsMayProceed de dataAudit.
+- Tu dois respecter regimeStatus, primaryRegime, admissibleStrategyFamilies, excludedStrategyFamilies et specialistsMayProceed de regimeAudit.
+- Si l'un des deux agents bloque la progression, mandateStatus doit être BLOCKED_MISSING_DATA et aucun autre spécialiste ne doit être demandé.
+- Si un agent impose RESTRICT ou RESTRICTED, tu limites le mandat aux usages et familles de stratégies permis.
+- Ne demande pas de nouveau data-quality ou market-regime dans requestedSpecialists : leurs travaux sont terminés.
+- Tu ne dois pas présenter le risque événementiel comme connu lorsque regimeAudit exige un calendrier économique externe.
 
 LIMITES ABSOLUES
 - Tu n'es pas un vendeur de signaux.
@@ -96,10 +100,10 @@ LIMITES ABSOLUES
 
 MÉTHODE
 1. Reformule l'objectif en résultat mesurable.
-2. Applique les conclusions du Data Quality Agent.
-3. Détermine les marchés et horizons étudiés.
+2. Applique les conclusions de qualité des données.
+3. Applique le régime déterministe et ses familles de stratégies admissibles.
 4. Sépare faits observés, hypothèses et inconnues.
-5. Choisis uniquement les prochains spécialistes nécessaires parmi : market-regime, alpha-research, backtest-auditor, portfolio, risk, execution, monitoring et journal.
+5. Choisis uniquement les prochains spécialistes nécessaires parmi : alpha-research, backtest-auditor, portfolio, risk, execution, monitoring et journal.
 6. Énonce les questions auxquelles chaque phase doit répondre.
 7. Recopie exactement les limites de risque fournies par l'application.
 8. Termine par une prochaine étape concrète.
@@ -161,7 +165,9 @@ export async function runMasterAgent(input: MasterAgentInput): Promise<MasterAge
   }));
 
   const parsed = MasterAgentOutputSchema.parse(result.finalOutput);
-  const auditBlocked = input.dataAudit.auditStatus === "BLOCK" || !input.dataAudit.specialistsMayProceed;
+  const dataBlocked = input.dataAudit.auditStatus === "BLOCK" || !input.dataAudit.specialistsMayProceed;
+  const regimeBlocked = input.regimeAudit.regimeStatus === "BLOCKED" || !input.regimeAudit.specialistsMayProceed;
+  const workflowBlocked = dataBlocked || regimeBlocked;
   const dataQualityStatus = input.dataAudit.auditStatus === "ACCEPT"
     ? "ACCEPTABLE_FOR_RESEARCH" as const
     : input.dataAudit.auditStatus === "RESTRICT"
@@ -170,10 +176,25 @@ export async function runMasterAgent(input: MasterAgentInput): Promise<MasterAge
 
   return {
     ...parsed,
-    mandateStatus: auditBlocked ? "BLOCKED_MISSING_DATA" : parsed.mandateStatus,
+    mandateStatus: workflowBlocked ? "BLOCKED_MISSING_DATA" : parsed.mandateStatus,
     observedFacts: uniqueLimited([
       ...input.dataAudit.confirmedFindings,
+      `Régime déterministe : ${input.regimeAudit.primaryRegime}.`,
+      `Tendance : ${input.regimeAudit.trendRegime}; volatilité : ${input.regimeAudit.volatilityRegime}.`,
+      `Confiance de classification : ${input.regimeAudit.confidenceScore} sur 100.`,
+      ...input.regimeAudit.confirmedEvidence,
       ...parsed.observedFacts
+    ], 12),
+    hypothesesToTest: workflowBlocked
+      ? []
+      : uniqueLimited([
+          ...input.regimeAudit.admissibleStrategyFamilies.map((family) => `Tester une hypothèse appartenant à la famille : ${family}.`),
+          ...parsed.hypothesesToTest
+        ], 12),
+    unknowns: uniqueLimited([
+      ...input.regimeAudit.uncertainties,
+      ...input.regimeAudit.externalDataRequired.map((item) => `Donnée externe requise : ${item}.`),
+      ...parsed.unknowns
     ], 12),
     dataQuality: {
       status: dataQualityStatus,
@@ -183,16 +204,19 @@ export async function runMasterAgent(input: MasterAgentInput): Promise<MasterAge
         ...input.dataAudit.unresolvedRisks
       ], 10)
     },
-    requestedSpecialists: auditBlocked
+    requestedSpecialists: workflowBlocked
       ? []
-      : parsed.requestedSpecialists.filter((key) => key !== "data-quality"),
+      : parsed.requestedSpecialists.filter((key) => key !== "data-quality" && key !== "market-regime"),
     prohibitedActions: uniqueLimited([
       ...input.dataAudit.prohibitedUses,
+      ...input.regimeAudit.excludedStrategyFamilies.map((family) => `Famille exclue dans ce régime : ${family}.`),
       ...parsed.prohibitedActions
     ], 12),
-    nextStep: auditBlocked
+    nextStep: dataBlocked
       ? input.dataAudit.remediationSteps[0] || "Corriger les données et relancer le Data Quality Agent."
-      : parsed.nextStep,
+      : regimeBlocked
+        ? "Corriger le blocage du régime avant d'appeler les agents de recherche."
+        : parsed.nextStep,
     riskConstraints: {
       mode: riskPolicy.mode,
       baseCurrency: riskPolicy.baseCurrency,
