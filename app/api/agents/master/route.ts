@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { calculateMarketStats, detectTrend } from "@/lib/market";
+import { diagnoseMarketData } from "@/lib/data-quality";
+import { runDataQualityAgent } from "@/lib/agents/data-quality";
 import { runMasterAgent } from "@/lib/agents/master";
 import { Candle } from "@/lib/types";
 
@@ -49,8 +51,15 @@ export async function POST(request: NextRequest) {
   const stats = calculateMarketStats(candles);
   const firstClose = candles.at(0)?.close ?? null;
   const lastClose = candles.at(-1)?.close ?? null;
+  const diagnostics = diagnoseMarketData({
+    candles,
+    interval: parsed.interval,
+    source: parsed.source,
+    warning: parsed.warning
+  });
 
   try {
+    const dataAudit = await runDataQualityAgent(diagnostics);
     const output = await runMasterAgent({
       objective: parsed.objective,
       pair: parsed.pair,
@@ -66,23 +75,32 @@ export async function POST(request: NextRequest) {
         changePercent: stats.changePercent,
         volatilityPercent: stats.volatility,
         trend: detectTrend(candles)
-      }
+      },
+      dataAudit
     });
 
     const usesStoredPrompt = Boolean(process.env.OPENAI_PROMPT_MASTER_ID);
+    const dataQualityUsesStoredPrompt = Boolean(process.env.OPENAI_PROMPT_DATA_QUALITY_ID);
 
     return NextResponse.json({
       agent: "Directeur quantitatif",
       mode: usesStoredPrompt ? "stored-prompt" : "code-instructions",
       model: usesStoredPrompt ? "Défini dans OpenAI Platform" : process.env.OPENAI_AGENT_MODEL || "gpt-5.1",
+      orchestration: "Data Quality Agent → Directeur quantitatif",
+      dataQuality: {
+        mode: dataQualityUsesStoredPrompt ? "stored-prompt" : "code-instructions",
+        diagnostics,
+        output: dataAudit
+      },
       output,
       generatedAt: new Date().toISOString()
     });
   } catch (error) {
-    console.error("Master agent run failed", error);
+    console.error("Quant workflow failed", error);
     return NextResponse.json({
-      error: "Le Directeur quantitatif n'a pas pu terminer son mandat.",
-      code: "MASTER_AGENT_FAILED"
+      error: "La chaîne Data Quality → Directeur quantitatif n'a pas pu terminer le mandat.",
+      code: "QUANT_WORKFLOW_FAILED",
+      diagnostics
     }, { status: 502 });
   }
 }
