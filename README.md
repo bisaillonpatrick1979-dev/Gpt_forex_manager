@@ -35,12 +35,16 @@ Deterministic regime diagnostics
     ↓
 Agent 03 — Market Regime Agent
     ↓ USABLE / RESTRICTED / BLOCKED
+Deterministic research envelope
+    ↓
+Agent 04 — Alpha Research Agent
+    ↓ SPECIFICATION_ONLY hypotheses
 Agent 01 — Quantitative Director
     ↓
-Next specialists selected by the mandate
+Backtest Auditor + Compliance Journal only
 ```
 
-The Data Quality Agent always runs first. The Market Regime Agent can run only after the data gate permits it. A blocking result from either specialist prevents the Quantitative Director from requesting additional agents.
+The gates are sequential. A blocking result prevents downstream research. Alpha hypotheses cannot move directly to portfolio construction, risk approval or simulated execution.
 
 ## Agent 01 — Quantitative Director
 
@@ -48,11 +52,10 @@ The Quantitative Director is available at `/directeur`.
 
 It can:
 
-- turn a research request into a measurable mandate;
-- apply the mandatory data-quality verdict;
-- apply the deterministic market-regime restrictions;
+- turn completed research into a measurable validation mandate;
+- apply data-quality, market-regime and alpha-research restrictions;
 - separate observed facts, hypotheses and unknowns;
-- select the specialist agents needed for the next phase;
+- send compliant hypotheses to the Backtest Auditor and Compliance Journal;
 - return typed, validated output.
 
 It cannot:
@@ -60,7 +63,8 @@ It cannot:
 - emit BUY or SELL;
 - choose an entry, stop, target or position size;
 - execute a real or paper order;
-- override data quality, market regime or deterministic risk controls;
+- override deterministic gates;
+- send an unvalidated hypothesis to portfolio, risk or execution;
 - promise returns or claim that an unvalidated strategy beats the market.
 
 Instructions: `docs/agents/01-directeur-quantitatif.md`.
@@ -86,7 +90,7 @@ Instructions: `docs/agents/02-data-quality.md`.
 
 ## Agent 03 — Market Regime Agent
 
-The Market Regime Agent interprets a regime classification that is calculated by application code.
+The Market Regime Agent interprets a regime classification calculated by application code.
 
 It receives:
 
@@ -98,7 +102,7 @@ It receives:
 - volatility ratio;
 - average true range;
 - position inside the recent range;
-- the restrictions inherited from Agent 02.
+- restrictions inherited from Agent 02.
 
 The primary regime is one of `TREND_UP`, `TREND_DOWN`, `RANGE`, `HIGH_VOLATILITY`, `LOW_VOLATILITY`, `TRANSITIONAL`, or `BLOCKED_BY_DATA`. The model cannot replace this classification.
 
@@ -106,9 +110,30 @@ Economic announcements, crises, news, spreads and real liquidity are not inferre
 
 Instructions: `docs/agents/03-market-regime.md`.
 
+## Agent 04 — Alpha Research Agent
+
+The Alpha Research Agent creates at most three falsifiable research specifications from the strategy families authorized by Agent 03.
+
+The deterministic research envelope imposes:
+
+- three hypotheses maximum;
+- six free parameters maximum per hypothesis;
+- at least 30% strictly out-of-sample data;
+- chronological train, validation and test separation;
+- walk-forward validation;
+- realistic transaction costs, spread and slippage;
+- parameter-sensitivity and sub-period stability tests;
+- correction for multiple testing and selection bias;
+- at least 50 simulated trades before evaluation;
+- mandatory independent review by the Backtest Auditor.
+
+Every retained hypothesis remains `SPECIFICATION_ONLY`. Insufficient or synthetic data may be used to test the workflow, but never to claim performance.
+
+Instructions: `docs/agents/04-alpha-research.md`.
+
 ## OpenAI stored prompts
 
-All three implemented agents work immediately from code instructions when `OPENAI_API_KEY` is configured. Versioned prompts created in OpenAI Platform can replace the code instructions without changing the API routes.
+All four implemented agents work immediately from code instructions when `OPENAI_API_KEY` is configured. Versioned prompts created in OpenAI Platform can replace the code instructions without changing the API routes.
 
 ```env
 OPENAI_PROMPT_MASTER_ID=pmpt_...
@@ -117,7 +142,8 @@ OPENAI_PROMPT_DATA_QUALITY_ID=pmpt_...
 OPENAI_PROMPT_DATA_QUALITY_VERSION=
 OPENAI_PROMPT_MARKET_REGIME_ID=pmpt_...
 OPENAI_PROMPT_MARKET_REGIME_VERSION=
-OPENAI_PROMPT_ALPHA_RESEARCH_ID=
+OPENAI_PROMPT_ALPHA_RESEARCH_ID=pmpt_...
+OPENAI_PROMPT_ALPHA_RESEARCH_VERSION=
 OPENAI_PROMPT_BACKTEST_AUDITOR_ID=
 OPENAI_PROMPT_PORTFOLIO_ID=
 OPENAI_PROMPT_RISK_ID=
@@ -169,8 +195,10 @@ APP_USER_ID=patrick-main
 - Local demo candle fallback
 - Deterministic market-data diagnostics
 - Deterministic market-regime diagnostics
+- Deterministic alpha-research envelope
 - OpenAI Agents SDK Data Quality Agent
 - OpenAI Agents SDK Market Regime Agent
+- OpenAI Agents SDK Alpha Research Agent
 - OpenAI Agents SDK Quantitative Director
 - Existing temporary OpenAI analysis endpoint with a deterministic local fallback
 - Local browser journal for paper-plan drafts

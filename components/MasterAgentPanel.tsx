@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Activity, Brain, CheckCircle2, ClipboardList, Database, Play, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Activity, Brain, CheckCircle2, ClipboardList, Database, FlaskConical, Play, ShieldCheck, TriangleAlert } from "lucide-react";
 import { MarketResponse } from "@/lib/types";
 
 const specialistLabels: Record<string, string> = {
@@ -78,6 +78,50 @@ type MarketRegimeOutput = {
   tradeDecision: "NO_TRADE_DECISION";
 };
 
+type AlphaHypothesis = {
+  hypothesisId: string;
+  family: string;
+  title: string;
+  directionalBias: "LONG_ONLY" | "SHORT_ONLY" | "BOTH" | "NEUTRAL";
+  economicIntuition: string;
+  marketCondition: string;
+  candidateCondition: string;
+  candidateExitCondition: string;
+  features: string[];
+  holdingPeriodResearch: string;
+  targetMetric: string;
+  invalidationCriteria: string[];
+  expectedFailureModes: string[];
+  requiredData: string[];
+  backtestSpecification: {
+    researchOnly: true;
+    liveTradingAllowed: false;
+    paperOrderAllowed: false;
+    minimumObservations: number;
+    minimumOutOfSamplePercent: 30;
+    minimumTrades: 50;
+    maxFreeParameters: 6;
+    requiredValidation: string[];
+    robustnessTests: string[];
+  };
+  status: "SPECIFICATION_ONLY";
+};
+
+type AlphaResearchOutput = {
+  researchStatus: "OPEN" | "RESTRICTED" | "BLOCKED";
+  summary: string;
+  allowedFamilies: string[];
+  excludedFamilies: string[];
+  hypotheses: AlphaHypothesis[];
+  rejectedHypothesisCount: number;
+  uncertainties: string[];
+  nextStep: string;
+  specialistsMayProceed: boolean;
+  liveTradingAllowed: false;
+  paperOrderAllowed: false;
+  tradeDecision: "NO_TRADE_DECISION";
+};
+
 type MasterResponse = {
   agent: string;
   mode: string;
@@ -112,6 +156,23 @@ type MasterResponse = {
     };
     output: MarketRegimeOutput;
   };
+  alphaResearch: {
+    mode: string;
+    envelope: {
+      status: "OPEN" | "RESTRICTED" | "BLOCKED";
+      availableObservations: number;
+      minimumObservations: number;
+      insufficientForBacktest: boolean;
+      maxHypotheses: 3;
+      minimumOutOfSamplePercent: 30;
+      minimumTrades: 50;
+      allowedFamilies: string[];
+      excludedFamilies: string[];
+      researchHorizons: string[];
+      requiredValidation: string[];
+    };
+    output: AlphaResearchOutput;
+  };
   output: MasterOutput;
   generatedAt: string;
 };
@@ -125,8 +186,8 @@ type Props = {
 };
 
 function statusLabel(status: MasterOutput["mandateStatus"]) {
-  if (status === "READY_FOR_SPECIALISTS") return "Prêt pour les spécialistes";
-  if (status === "BLOCKED_MISSING_DATA") return "Bloqué : données manquantes";
+  if (status === "READY_FOR_SPECIALISTS") return "Prêt pour la validation";
+  if (status === "BLOCKED_MISSING_DATA") return "Bloqué : prérequis manquant";
   return "Mandat refusé";
 }
 
@@ -138,6 +199,12 @@ function auditTone(status: DataAuditOutput["auditStatus"]) {
 
 function regimeTone(status: MarketRegimeOutput["regimeStatus"]) {
   if (status === "USABLE") return "green";
+  if (status === "BLOCKED") return "red";
+  return "yellow";
+}
+
+function alphaTone(status: AlphaResearchOutput["researchStatus"]) {
+  if (status === "OPEN") return "green";
   if (status === "BLOCKED") return "red";
   return "yellow";
 }
@@ -195,11 +262,11 @@ export default function MasterAgentPanel({ pair, interval, capitalCad, market, a
     <section className="card master-agent-console">
       <div className="card-heading-row">
         <div>
-          <h2><Brain size={21} /> Chaîne Agents 02 → 03 → 01</h2>
-          <p className="small">La qualité des données et le régime de marché sont imposés avant que le Directeur puisse préparer un mandat.</p>
+          <h2><Brain size={21} /> Chaîne Agents 02 → 03 → 04 → 01</h2>
+          <p className="small">Les données, le régime et les hypothèses sont contrôlés avant que le Directeur prépare le mandat de validation.</p>
         </div>
         <div className="actions">
-          <span className={apiConfigured ? "badge buy" : "badge sell"}>{apiConfigured ? "3 agents OpenAI prêts" : "Clé OpenAI requise"}</span>
+          <span className={apiConfigured ? "badge buy" : "badge sell"}>{apiConfigured ? "4 agents OpenAI prêts" : "Clé OpenAI requise"}</span>
           <span className="badge">{pair} · {interval.toUpperCase()}</span>
         </div>
       </div>
@@ -214,7 +281,7 @@ export default function MasterAgentPanel({ pair, interval, capitalCad, market, a
       <div className="master-run-row">
         <div className="small">Capital fictif : {capitalCad.toLocaleString("fr-CA", { style: "currency", currency: "CAD" })}</div>
         <button className="btn green" onClick={runDirector} disabled={!canRun || loading}>
-          <Play size={16} /> {loading ? "Audit, régime et mandat en cours..." : "Lancer la chaîne quant"}
+          <Play size={16} /> {loading ? "Audit, régime, hypothèses et mandat..." : "Lancer la chaîne quant"}
         </button>
       </div>
 
@@ -287,6 +354,65 @@ export default function MasterAgentPanel({ pair, interval, capitalCad, market, a
             <div className="warning"><b>Risque événementiel inconnu :</b> un calendrier économique fiable doit être ajouté avant toute conclusion liée aux annonces ou aux crises.</div>
           </div>
 
+          <div className="alpha-result">
+            <div className="card-heading-row">
+              <div>
+                <h2><FlaskConical size={20} /> Agent 04 — Alpha Research Agent</h2>
+                <p className="small">Hypothèses falsifiables destinées uniquement aux futurs backtests.</p>
+              </div>
+              <span className={`badge ${alphaTone(result.alphaResearch.output.researchStatus)}`}>{result.alphaResearch.output.researchStatus}</span>
+            </div>
+            <div className="grid grid4">
+              <div className="kpi"><div className="name">Hypothèses conservées</div><div className="value">{result.alphaResearch.output.hypotheses.length}</div></div>
+              <div className="kpi"><div className="name">Observations disponibles</div><div className="value">{result.alphaResearch.envelope.availableObservations}</div></div>
+              <div className="kpi"><div className="name">Minimum exigé</div><div className="value">{result.alphaResearch.envelope.minimumObservations}</div></div>
+              <div className="kpi"><div className="name">Transaction autorisée</div><div className="value small-value red">NON</div></div>
+            </div>
+            <p>{result.alphaResearch.output.summary}</p>
+            {result.alphaResearch.envelope.insufficientForBacktest && (
+              <div className="warning"><b>Échantillon insuffisant :</b> les idées peuvent être spécifiées, mais aucune performance ne peut être validée avec les chandelles actuellement chargées.</div>
+            )}
+            <div className="alpha-hypotheses">
+              {result.alphaResearch.output.hypotheses.length === 0 && <div className="empty-state">Aucune hypothèse conforme n’a été conservée.</div>}
+              {result.alphaResearch.output.hypotheses.map((hypothesis) => (
+                <article className="alpha-hypothesis" key={hypothesis.hypothesisId}>
+                  <div className="agent-card-topline">
+                    <div>
+                      <div className="eyebrow">{hypothesis.hypothesisId}</div>
+                      <h2>{hypothesis.title}</h2>
+                    </div>
+                    <div className="actions">
+                      <span className="badge">{hypothesis.directionalBias}</span>
+                      <span className="badge yellow">{hypothesis.status}</span>
+                    </div>
+                  </div>
+                  <p><b>Famille :</b> {hypothesis.family}</p>
+                  <p><b>Intuition :</b> {hypothesis.economicIntuition}</p>
+                  <div className="grid grid2 alpha-rule-grid">
+                    <div><b>Condition candidate de recherche</b><p>{hypothesis.candidateCondition}</p></div>
+                    <div><b>Condition de sortie à tester</b><p>{hypothesis.candidateExitCondition}</p></div>
+                  </div>
+                  <div className="alpha-meta">
+                    <span>Horizon : <b>{hypothesis.holdingPeriodResearch}</b></span>
+                    <span>Minimum : <b>{hypothesis.backtestSpecification.minimumObservations} observations</b></span>
+                    <span>Hors échantillon : <b>{hypothesis.backtestSpecification.minimumOutOfSamplePercent} %</b></span>
+                    <span>Transactions simulées : <b>{hypothesis.backtestSpecification.minimumTrades} minimum</b></span>
+                  </div>
+                  <div className="grid grid2 master-detail-grid">
+                    <div className="agent">
+                      <h2>Critères d’invalidation</h2>
+                      <ul>{hypothesis.invalidationCriteria.map((item) => <li key={item}>{item}</li>)}</ul>
+                    </div>
+                    <div className="agent">
+                      <h2>Échecs possibles</h2>
+                      <ul>{hypothesis.expectedFailureModes.map((item) => <li key={item}>{item}</li>)}</ul>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+
           <div className="grid grid4">
             <div className="kpi"><div className="name">État du Directeur</div><div className="value small-value">{statusLabel(result.output.mandateStatus)}</div></div>
             <div className="kpi"><div className="name">Qualité transmise</div><div className="value small-value yellow">{result.output.dataQuality.status}</div></div>
@@ -295,7 +421,7 @@ export default function MasterAgentPanel({ pair, interval, capitalCad, market, a
           </div>
 
           <div className="master-summary">
-            <h2><ClipboardList size={19} /> Agent 01 — Objectif mesurable</h2>
+            <h2><ClipboardList size={19} /> Agent 01 — Mandat de validation</h2>
             <p>{result.output.measurableObjective}</p>
             <div className="data-alert">{result.output.synthesis}</div>
           </div>
@@ -320,12 +446,12 @@ export default function MasterAgentPanel({ pair, interval, capitalCad, market, a
           </div>
 
           <div className="card master-specialists-card">
-            <h2>Prochains spécialistes demandés</h2>
+            <h2>Prochains spécialistes autorisés</h2>
             <div className="actions">
               {result.output.requestedSpecialists.length === 0 && <span className="badge">Aucun tant que le blocage n’est pas corrigé</span>}
               {result.output.requestedSpecialists.map((key) => <span className="badge" key={key}>{specialistLabels[key] || key}</span>)}
             </div>
-            <h2 className="master-subheading">Questions de recherche</h2>
+            <h2 className="master-subheading">Questions de validation</h2>
             <ol>{result.output.researchQuestions.map((item) => <li key={item}>{item}</li>)}</ol>
           </div>
 
