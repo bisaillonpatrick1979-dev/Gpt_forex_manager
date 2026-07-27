@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Brain, CheckCircle2, ClipboardList, Play, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Brain, CheckCircle2, ClipboardList, Database, Play, ShieldCheck, TriangleAlert } from "lucide-react";
 import { MarketResponse } from "@/lib/types";
 
 const specialistLabels: Record<string, string> = {
@@ -49,10 +49,37 @@ type MasterOutput = {
   tradeDecision: "NO_TRADE_DECISION";
 };
 
+type DataAuditOutput = {
+  auditStatus: "ACCEPT" | "RESTRICT" | "BLOCK";
+  dataClass: "LIVE_OR_DELAYED" | "HISTORICAL_RESEARCH" | "SYNTHETIC" | "INVALID";
+  summary: string;
+  confirmedFindings: string[];
+  unresolvedRisks: string[];
+  permittedUses: string[];
+  prohibitedUses: string[];
+  remediationSteps: string[];
+  specialistsMayProceed: boolean;
+  tradeDecision: "NO_TRADE_DECISION";
+};
+
 type MasterResponse = {
   agent: string;
   mode: string;
   model: string;
+  orchestration: string;
+  dataQuality: {
+    mode: string;
+    diagnostics: {
+      decision: "ACCEPT" | "RESTRICT" | "BLOCK";
+      dataClass: string;
+      candleCount: number;
+      missingIntervalCount: number;
+      invalidOhlcCount: number;
+      duplicateTimestampCount: number;
+      staleMinutes: number | null;
+    };
+    output: DataAuditOutput;
+  };
   output: MasterOutput;
   generatedAt: string;
 };
@@ -69,6 +96,12 @@ function statusLabel(status: MasterOutput["mandateStatus"]) {
   if (status === "READY_FOR_SPECIALISTS") return "Prêt pour les spécialistes";
   if (status === "BLOCKED_MISSING_DATA") return "Bloqué : données manquantes";
   return "Mandat refusé";
+}
+
+function auditTone(status: DataAuditOutput["auditStatus"]) {
+  if (status === "ACCEPT") return "green";
+  if (status === "BLOCK") return "red";
+  return "yellow";
 }
 
 export default function MasterAgentPanel({ pair, interval, capitalCad, market, apiConfigured }: Props) {
@@ -120,11 +153,11 @@ export default function MasterAgentPanel({ pair, interval, capitalCad, market, a
     <section className="card master-agent-console">
       <div className="card-heading-row">
         <div>
-          <h2><Brain size={21} /> Agent 01 — Directeur quantitatif</h2>
-          <p className="small">Il prépare le mandat et choisit les spécialistes. Il ne peut pas émettre d’ordre ni de signal BUY/SELL.</p>
+          <h2><Brain size={21} /> Chaîne Agent 02 → Agent 01</h2>
+          <p className="small">Le Data Quality Agent audite les données en premier. Le Directeur reçoit ensuite son verdict et ne peut pas le contourner.</p>
         </div>
         <div className="actions">
-          <span className={apiConfigured ? "badge buy" : "badge sell"}>{apiConfigured ? "OpenAI prêt" : "Clé OpenAI requise"}</span>
+          <span className={apiConfigured ? "badge buy" : "badge sell"}>{apiConfigured ? "2 agents OpenAI prêts" : "Clé OpenAI requise"}</span>
           <span className="badge">{pair} · {interval.toUpperCase()}</span>
         </div>
       </div>
@@ -139,24 +172,54 @@ export default function MasterAgentPanel({ pair, interval, capitalCad, market, a
       <div className="master-run-row">
         <div className="small">Capital fictif : {capitalCad.toLocaleString("fr-CA", { style: "currency", currency: "CAD" })}</div>
         <button className="btn green" onClick={runDirector} disabled={!canRun || loading}>
-          <Play size={16} /> {loading ? "Préparation du mandat..." : "Lancer le Directeur"}
+          <Play size={16} /> {loading ? "Audit puis préparation du mandat..." : "Lancer la chaîne quant"}
         </button>
       </div>
 
-      {!apiConfigured && <div className="warning">OPENAI_API_KEY doit être configurée dans Vercel avant d’exécuter cet agent.</div>}
+      {!apiConfigured && <div className="warning">OPENAI_API_KEY doit être configurée dans Vercel avant d’exécuter les agents.</div>}
       {error && <div className="system-banner system-banner-warning"><TriangleAlert size={20} /><div><b>Échec du mandat</b><div>{error}</div></div></div>}
 
       {result && (
         <div className="master-output">
+          <div className="data-quality-result">
+            <div className="card-heading-row">
+              <div>
+                <h2><Database size={20} /> Agent 02 — Data Quality Agent</h2>
+                <p className="small">Verdict déterministe appliqué avant le Directeur.</p>
+              </div>
+              <span className={`badge ${auditTone(result.dataQuality.output.auditStatus)}`}>{result.dataQuality.output.auditStatus}</span>
+            </div>
+            <div className="grid grid4">
+              <div className="kpi"><div className="name">Classe</div><div className="value small-value">{result.dataQuality.output.dataClass}</div></div>
+              <div className="kpi"><div className="name">Chandelles</div><div className="value">{result.dataQuality.diagnostics.candleCount}</div></div>
+              <div className="kpi"><div className="name">Intervalles manquants</div><div className="value">{result.dataQuality.diagnostics.missingIntervalCount}</div></div>
+              <div className="kpi"><div className="name">Peut poursuivre</div><div className={`value small-value ${result.dataQuality.output.specialistsMayProceed ? "green" : "red"}`}>{result.dataQuality.output.specialistsMayProceed ? "OUI" : "NON"}</div></div>
+            </div>
+            <p>{result.dataQuality.output.summary}</p>
+            <div className="grid grid2 master-detail-grid">
+              <div className="agent">
+                <h2><CheckCircle2 size={18} /> Usages permis</h2>
+                <ul>{result.dataQuality.output.permittedUses.map((item) => <li key={item}>{item}</li>)}</ul>
+              </div>
+              <div className="agent">
+                <h2><TriangleAlert size={18} /> Usages interdits</h2>
+                <ul>{result.dataQuality.output.prohibitedUses.map((item) => <li key={item}>{item}</li>)}</ul>
+              </div>
+            </div>
+            {result.dataQuality.output.remediationSteps.length > 0 && (
+              <div className="warning"><b>Corrections proposées :</b> {result.dataQuality.output.remediationSteps.join(" · ")}</div>
+            )}
+          </div>
+
           <div className="grid grid4">
-            <div className="kpi"><div className="name">État</div><div className="value small-value">{statusLabel(result.output.mandateStatus)}</div></div>
-            <div className="kpi"><div className="name">Qualité des données</div><div className="value small-value yellow">{result.output.dataQuality.status}</div></div>
-            <div className="kpi"><div className="name">Spécialistes requis</div><div className="value">{result.output.requestedSpecialists.length}</div></div>
+            <div className="kpi"><div className="name">État du Directeur</div><div className="value small-value">{statusLabel(result.output.mandateStatus)}</div></div>
+            <div className="kpi"><div className="name">Qualité transmise</div><div className="value small-value yellow">{result.output.dataQuality.status}</div></div>
+            <div className="kpi"><div className="name">Prochains spécialistes</div><div className="value">{result.output.requestedSpecialists.length}</div></div>
             <div className="kpi"><div className="name">Décision de transaction</div><div className="value small-value green">Aucune</div></div>
           </div>
 
           <div className="master-summary">
-            <h2><ClipboardList size={19} /> Objectif mesurable</h2>
+            <h2><ClipboardList size={19} /> Agent 01 — Objectif mesurable</h2>
             <p>{result.output.measurableObjective}</p>
             <div className="data-alert">{result.output.synthesis}</div>
           </div>
@@ -181,8 +244,9 @@ export default function MasterAgentPanel({ pair, interval, capitalCad, market, a
           </div>
 
           <div className="card master-specialists-card">
-            <h2>Spécialistes demandés</h2>
+            <h2>Prochains spécialistes demandés</h2>
             <div className="actions">
+              {result.output.requestedSpecialists.length === 0 && <span className="badge">Aucun tant que le blocage n’est pas corrigé</span>}
               {result.output.requestedSpecialists.map((key) => <span className="badge" key={key}>{specialistLabels[key] || key}</span>)}
             </div>
             <h2 className="master-subheading">Questions de recherche</h2>
@@ -194,7 +258,7 @@ export default function MasterAgentPanel({ pair, interval, capitalCad, market, a
             <div><b>Prochaine étape</b><div>{result.output.nextStep}</div></div>
           </div>
 
-          <p className="small">Moteur : {result.model} · Configuration : {result.mode} · Généré le {new Date(result.generatedAt).toLocaleString("fr-CA")}</p>
+          <p className="small">Orchestration : {result.orchestration} · Directeur : {result.model} · Généré le {new Date(result.generatedAt).toLocaleString("fr-CA")}</p>
         </div>
       )}
     </section>

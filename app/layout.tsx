@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./quant-firm.css";
+import "./data-quality.css";
 
 export const metadata: Metadata = {
   title: "GPT Forex Manager | Quant Firm OS",
@@ -12,8 +13,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="fr-CA">
       <body>
         {children}
-        <a className="global-director-link" href="/directeur" aria-label="Ouvrir le Directeur quantitatif">
-          Agent 01 · Directeur
+        <a className="global-director-link" href="/directeur" aria-label="Ouvrir la chaîne d’agents quantitatifs">
+          Agents 02 → 01
         </a>
       </body>
     </html>

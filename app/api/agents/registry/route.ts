@@ -3,15 +3,15 @@ import { agentCatalog, riskPolicy } from "@/lib/firm-config";
 
 export const dynamic = "force-dynamic";
 
+const implementedAgentKeys = new Set(["master", "data-quality"]);
+
 export async function GET() {
   const openAiApiConfigured = Boolean(process.env.OPENAI_API_KEY);
 
   const agents = agentCatalog.map((agent) => {
     const storedPromptConfigured = Boolean(process.env[agent.connectionEnvVar]);
-    const sdkImplemented = agent.key === "master";
-    const connected = agent.key === "master"
-      ? openAiApiConfigured
-      : openAiApiConfigured && storedPromptConfigured;
+    const sdkImplemented = implementedAgentKeys.has(agent.key);
+    const connected = sdkImplemented && openAiApiConfigured;
 
     return {
       key: agent.key,
@@ -22,16 +22,21 @@ export async function GET() {
       connected,
       sdkImplemented,
       storedPromptConfigured,
-      integrationMode: agent.key === "master"
-        ? storedPromptConfigured ? "agents-sdk-with-stored-prompt" : "agents-sdk-with-code-instructions"
-        : storedPromptConfigured ? "stored-prompt-awaiting-sdk-agent" : "awaiting-specialist",
+      integrationMode: sdkImplemented
+        ? storedPromptConfigured
+          ? "agents-sdk-with-stored-prompt"
+          : "agents-sdk-with-code-instructions"
+        : storedPromptConfigured
+          ? "stored-prompt-awaiting-sdk-agent"
+          : "awaiting-specialist",
       status: connected ? "configured" : sdkImplemented ? "api-key-required" : "awaiting-agent",
       mayExecuteOrders: agent.mayExecuteOrders
     };
   });
 
   return NextResponse.json({
-    architecture: "manager-with-specialists",
+    architecture: "deterministic-gates-with-manager-and-specialists",
+    activeSequence: ["data-quality", "master"],
     openAiApiConfigured,
     connectedAgents: agents.filter((agent) => agent.connected).length,
     implementedAgents: agents.filter((agent) => agent.sdkImplemented).length,
