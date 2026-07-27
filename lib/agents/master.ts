@@ -1,6 +1,7 @@
 import { Agent, run } from "@openai/agents";
 import { z } from "zod";
 import { riskPolicy } from "@/lib/firm-config";
+import { DataQualityOutput } from "@/lib/agents/data-quality";
 
 const SpecialistKeySchema = z.enum([
   "data-quality",
@@ -69,13 +70,21 @@ export type MasterAgentInput = {
     volatilityPercent: number;
     trend: string;
   };
+  dataAudit: DataQualityOutput;
 };
 
 export const MASTER_AGENT_INSTRUCTIONS = `
 Tu es le Directeur quantitatif de GPT Forex Manager, une firme de recherche quantitative en mode paper trading seulement.
 
 MISSION
-Tu transformes une demande de recherche en mandat mesurable. Tu vérifies les données disponibles, sélectionnes les spécialistes requis, sépares les faits des hypothèses et établis la prochaine étape vérifiable.
+Tu transformes une demande de recherche en mandat mesurable. Tu sélectionnes les prochains spécialistes, sépares les faits des hypothèses et établis la prochaine étape vérifiable.
+
+CHAÎNE OBLIGATOIRE
+Le Data Quality Agent a déjà effectué l'audit avant toi. Son résultat est fourni dans dataAudit.
+- Tu dois respecter auditStatus, permittedUses, prohibitedUses et specialistsMayProceed.
+- Si auditStatus vaut BLOCK, mandateStatus doit être BLOCKED_MISSING_DATA et aucun autre spécialiste ne doit être demandé.
+- Si auditStatus vaut RESTRICT, tu dois limiter le mandat aux usages permis.
+- Ne demande pas de nouveau le Data Quality Agent dans requestedSpecialists : son travail est déjà terminé.
 
 LIMITES ABSOLUES
 - Tu n'es pas un vendeur de signaux.
@@ -83,15 +92,14 @@ LIMITES ABSOLUES
 - Tu n'inventes jamais de performance, de probabilité ou de donnée manquante.
 - Tu n'émets jamais directement BUY, SELL, un prix d'entrée, un stop loss, une taille de position ou un ordre de courtier.
 - Tu refuses toute exécution réelle ou tentative de contourner une limite de risque.
-- Tu bloques le mandat lorsque les données sont insuffisantes au lieu de deviner.
 - Le Risk Governor conserve toujours un droit de veto indépendant.
 
 MÉTHODE
 1. Reformule l'objectif en résultat mesurable.
-2. Évalue la provenance, la fraîcheur et la suffisance des données.
+2. Applique les conclusions du Data Quality Agent.
 3. Détermine les marchés et horizons étudiés.
 4. Sépare faits observés, hypothèses et inconnues.
-5. Choisis uniquement les spécialistes nécessaires parmi : data-quality, market-regime, alpha-research, backtest-auditor, portfolio, risk, execution, monitoring et journal.
+5. Choisis uniquement les prochains spécialistes nécessaires parmi : market-regime, alpha-research, backtest-auditor, portfolio, risk, execution, monitoring et journal.
 6. Énonce les questions auxquelles chaque phase doit répondre.
 7. Recopie exactement les limites de risque fournies par l'application.
 8. Termine par une prochaine étape concrète.
@@ -111,6 +119,10 @@ POLITIQUE PERMANENTE
 
 Retourne uniquement la structure exigée par le schéma de sortie.
 `.trim();
+
+function uniqueLimited(values: string[], limit: number) {
+  return Array.from(new Set(values.filter(Boolean))).slice(0, limit);
+}
 
 function createMasterAgent() {
   const storedPromptId = process.env.OPENAI_PROMPT_MASTER_ID?.trim();
@@ -149,9 +161,38 @@ export async function runMasterAgent(input: MasterAgentInput): Promise<MasterAge
   }));
 
   const parsed = MasterAgentOutputSchema.parse(result.finalOutput);
+  const auditBlocked = input.dataAudit.auditStatus === "BLOCK" || !input.dataAudit.specialistsMayProceed;
+  const dataQualityStatus = input.dataAudit.auditStatus === "ACCEPT"
+    ? "ACCEPTABLE_FOR_RESEARCH" as const
+    : input.dataAudit.auditStatus === "RESTRICT"
+      ? "SIMULATION_ONLY" as const
+      : "INSUFFICIENT" as const;
 
   return {
     ...parsed,
+    mandateStatus: auditBlocked ? "BLOCKED_MISSING_DATA" : parsed.mandateStatus,
+    observedFacts: uniqueLimited([
+      ...input.dataAudit.confirmedFindings,
+      ...parsed.observedFacts
+    ], 12),
+    dataQuality: {
+      status: dataQualityStatus,
+      reasons: uniqueLimited([
+        input.dataAudit.summary,
+        ...input.dataAudit.confirmedFindings,
+        ...input.dataAudit.unresolvedRisks
+      ], 10)
+    },
+    requestedSpecialists: auditBlocked
+      ? []
+      : parsed.requestedSpecialists.filter((key) => key !== "data-quality"),
+    prohibitedActions: uniqueLimited([
+      ...input.dataAudit.prohibitedUses,
+      ...parsed.prohibitedActions
+    ], 12),
+    nextStep: auditBlocked
+      ? input.dataAudit.remediationSteps[0] || "Corriger les données et relancer le Data Quality Agent."
+      : parsed.nextStep,
     riskConstraints: {
       mode: riskPolicy.mode,
       baseCurrency: riskPolicy.baseCurrency,
