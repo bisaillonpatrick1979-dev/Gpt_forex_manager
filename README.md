@@ -27,16 +27,20 @@ GPT Forex Manager is a controlled quantitative research and paper-trading operat
 ```text
 Market data
     ↓
-Deterministic diagnostics
+Deterministic data diagnostics
     ↓
 Agent 02 — Data Quality Agent
     ↓ ACCEPT / RESTRICT / BLOCK
+Deterministic regime diagnostics
+    ↓
+Agent 03 — Market Regime Agent
+    ↓ USABLE / RESTRICTED / BLOCKED
 Agent 01 — Quantitative Director
     ↓
 Next specialists selected by the mandate
 ```
 
-The Data Quality Agent always runs before the Quantitative Director. A `BLOCK` result prevents the Director from requesting any additional specialist.
+The Data Quality Agent always runs first. The Market Regime Agent can run only after the data gate permits it. A blocking result from either specialist prevents the Quantitative Director from requesting additional agents.
 
 ## Agent 01 — Quantitative Director
 
@@ -45,7 +49,8 @@ The Quantitative Director is available at `/directeur`.
 It can:
 
 - turn a research request into a measurable mandate;
-- apply the mandatory Data Quality Agent verdict;
+- apply the mandatory data-quality verdict;
+- apply the deterministic market-regime restrictions;
 - separate observed facts, hypotheses and unknowns;
 - select the specialist agents needed for the next phase;
 - return typed, validated output.
@@ -55,7 +60,7 @@ It cannot:
 - emit BUY or SELL;
 - choose an entry, stop, target or position size;
 - execute a real or paper order;
-- override data quality or deterministic risk controls;
+- override data quality, market regime or deterministic risk controls;
 - promise returns or claim that an unvalidated strategy beats the market.
 
 Instructions: `docs/agents/01-directeur-quantitatif.md`.
@@ -79,16 +84,39 @@ Its deterministic decision is one of `ACCEPT`, `RESTRICT`, or `BLOCK`. Model out
 
 Instructions: `docs/agents/02-data-quality.md`.
 
+## Agent 03 — Market Regime Agent
+
+The Market Regime Agent interprets a regime classification that is calculated by application code.
+
+It receives:
+
+- fast and slow moving averages;
+- moving-average spread in basis points;
+- normalized price slope;
+- directional efficiency and consistency;
+- recent and baseline volatility;
+- volatility ratio;
+- average true range;
+- position inside the recent range;
+- the restrictions inherited from Agent 02.
+
+The primary regime is one of `TREND_UP`, `TREND_DOWN`, `RANGE`, `HIGH_VOLATILITY`, `LOW_VOLATILITY`, `TRANSITIONAL`, or `BLOCKED_BY_DATA`. The model cannot replace this classification.
+
+Economic announcements, crises, news, spreads and real liquidity are not inferred from candle data alone. Event risk remains `UNKNOWN_REQUIRES_EXTERNAL_CALENDAR` until a reliable timestamped economic calendar is connected.
+
+Instructions: `docs/agents/03-market-regime.md`.
+
 ## OpenAI stored prompts
 
-Both implemented agents work immediately from code instructions when `OPENAI_API_KEY` is configured. Versioned prompts created in OpenAI Platform can replace the code instructions without changing the API routes.
+All three implemented agents work immediately from code instructions when `OPENAI_API_KEY` is configured. Versioned prompts created in OpenAI Platform can replace the code instructions without changing the API routes.
 
 ```env
 OPENAI_PROMPT_MASTER_ID=pmpt_...
 OPENAI_PROMPT_MASTER_VERSION=
 OPENAI_PROMPT_DATA_QUALITY_ID=pmpt_...
 OPENAI_PROMPT_DATA_QUALITY_VERSION=
-OPENAI_PROMPT_MARKET_REGIME_ID=
+OPENAI_PROMPT_MARKET_REGIME_ID=pmpt_...
+OPENAI_PROMPT_MARKET_REGIME_VERSION=
 OPENAI_PROMPT_ALPHA_RESEARCH_ID=
 OPENAI_PROMPT_BACKTEST_AUDITOR_ID=
 OPENAI_PROMPT_PORTFOLIO_ID=
@@ -140,7 +168,9 @@ APP_USER_ID=patrick-main
 - Frankfurter real spot fallback with simulated candles
 - Local demo candle fallback
 - Deterministic market-data diagnostics
+- Deterministic market-regime diagnostics
 - OpenAI Agents SDK Data Quality Agent
+- OpenAI Agents SDK Market Regime Agent
 - OpenAI Agents SDK Quantitative Director
 - Existing temporary OpenAI analysis endpoint with a deterministic local fallback
 - Local browser journal for paper-plan drafts
