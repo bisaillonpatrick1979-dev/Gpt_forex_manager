@@ -3,14 +3,16 @@ import { z } from "zod";
 import { calculateMarketStats, detectTrend } from "@/lib/market";
 import { diagnoseMarketData } from "@/lib/data-quality";
 import { diagnoseMarketRegime } from "@/lib/market-regime";
+import { buildAlphaResearchEnvelope } from "@/lib/alpha-research";
 import { runDataQualityAgent } from "@/lib/agents/data-quality";
 import { runMarketRegimeAgent } from "@/lib/agents/market-regime";
+import { runAlphaResearchAgent } from "@/lib/agents/alpha-research";
 import { runMasterAgent } from "@/lib/agents/master";
 import { Candle } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const CandleSchema = z.object({
   time: z.string(),
@@ -68,6 +70,18 @@ export async function POST(request: NextRequest) {
       dataClass: dataAudit.dataClass
     });
     const regimeAudit = await runMarketRegimeAgent(regimeDiagnostics);
+    const alphaEnvelope = buildAlphaResearchEnvelope({
+      pair: parsed.pair,
+      interval: parsed.interval,
+      availableObservations: candles.length,
+      dataDecision: dataAudit.auditStatus,
+      dataClass: dataAudit.dataClass,
+      regimeAudit
+    });
+    const alphaResearch = await runAlphaResearchAgent({
+      objective: parsed.objective,
+      envelope: alphaEnvelope
+    });
 
     const output = await runMasterAgent({
       objective: parsed.objective,
@@ -86,18 +100,20 @@ export async function POST(request: NextRequest) {
         trend: detectTrend(candles)
       },
       dataAudit,
-      regimeAudit
+      regimeAudit,
+      alphaResearch
     });
 
     const masterUsesStoredPrompt = Boolean(process.env.OPENAI_PROMPT_MASTER_ID);
     const dataQualityUsesStoredPrompt = Boolean(process.env.OPENAI_PROMPT_DATA_QUALITY_ID);
     const marketRegimeUsesStoredPrompt = Boolean(process.env.OPENAI_PROMPT_MARKET_REGIME_ID);
+    const alphaResearchUsesStoredPrompt = Boolean(process.env.OPENAI_PROMPT_ALPHA_RESEARCH_ID);
 
     return NextResponse.json({
       agent: "Directeur quantitatif",
       mode: masterUsesStoredPrompt ? "stored-prompt" : "code-instructions",
       model: masterUsesStoredPrompt ? "Défini dans OpenAI Platform" : process.env.OPENAI_AGENT_MODEL || "gpt-5.1",
-      orchestration: "Data Quality Agent → Market Regime Agent → Directeur quantitatif",
+      orchestration: "Data Quality Agent → Market Regime Agent → Alpha Research Agent → Directeur quantitatif",
       dataQuality: {
         mode: dataQualityUsesStoredPrompt ? "stored-prompt" : "code-instructions",
         diagnostics: dataDiagnostics,
@@ -108,13 +124,18 @@ export async function POST(request: NextRequest) {
         diagnostics: regimeDiagnostics,
         output: regimeAudit
       },
+      alphaResearch: {
+        mode: alphaResearchUsesStoredPrompt ? "stored-prompt" : "code-instructions",
+        envelope: alphaEnvelope,
+        output: alphaResearch
+      },
       output,
       generatedAt: new Date().toISOString()
     });
   } catch (error) {
     console.error("Quant workflow failed", error);
     return NextResponse.json({
-      error: "La chaîne Qualité → Régime → Directeur n'a pas pu terminer le mandat.",
+      error: "La chaîne Qualité → Régime → Alpha → Directeur n'a pas pu terminer le mandat.",
       code: "QUANT_WORKFLOW_FAILED",
       dataDiagnostics
     }, { status: 502 });
