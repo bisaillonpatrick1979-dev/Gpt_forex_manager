@@ -70,8 +70,8 @@ export const agentCatalog: AgentDefinition[] = [
     key: "master",
     name: "Directeur quantitatif",
     role: "Agent principal",
-    responsibility: "Orchestrer les spécialistes, synthétiser leurs rapports et demander l'autorisation du Risk Governor.",
-    connectionEnvVar: "OPENAI_AGENT_MASTER_ID",
+    responsibility: "Transformer le mandat en plan de recherche, sélectionner les spécialistes et synthétiser leurs rapports sans émettre d’ordre.",
+    connectionEnvVar: "OPENAI_PROMPT_MASTER_ID",
     mayExecuteOrders: false
   },
   {
@@ -79,7 +79,7 @@ export const agentCatalog: AgentDefinition[] = [
     name: "Data Quality Agent",
     role: "Données",
     responsibility: "Contrôler la fraîcheur, les trous, les anomalies et la provenance des données.",
-    connectionEnvVar: "OPENAI_AGENT_DATA_QUALITY_ID",
+    connectionEnvVar: "OPENAI_PROMPT_DATA_QUALITY_ID",
     mayExecuteOrders: false
   },
   {
@@ -87,7 +87,7 @@ export const agentCatalog: AgentDefinition[] = [
     name: "Market Regime Agent",
     role: "Contexte",
     responsibility: "Classifier le régime et déterminer quelles familles de stratégies sont admissibles.",
-    connectionEnvVar: "OPENAI_AGENT_MARKET_REGIME_ID",
+    connectionEnvVar: "OPENAI_PROMPT_MARKET_REGIME_ID",
     mayExecuteOrders: false
   },
   {
@@ -95,7 +95,7 @@ export const agentCatalog: AgentDefinition[] = [
     name: "Alpha Research Agent",
     role: "Recherche",
     responsibility: "Proposer des hypothèses et des règles de stratégie mesurables.",
-    connectionEnvVar: "OPENAI_AGENT_ALPHA_RESEARCH_ID",
+    connectionEnvVar: "OPENAI_PROMPT_ALPHA_RESEARCH_ID",
     mayExecuteOrders: false
   },
   {
@@ -103,7 +103,7 @@ export const agentCatalog: AgentDefinition[] = [
     name: "Backtest Auditor",
     role: "Validation",
     responsibility: "Tenter de réfuter chaque stratégie et vérifier les biais de backtest.",
-    connectionEnvVar: "OPENAI_AGENT_BACKTEST_AUDITOR_ID",
+    connectionEnvVar: "OPENAI_PROMPT_BACKTEST_AUDITOR_ID",
     mayExecuteOrders: false
   },
   {
@@ -111,7 +111,7 @@ export const agentCatalog: AgentDefinition[] = [
     name: "Portfolio Allocator",
     role: "Portefeuille",
     responsibility: "Calculer les allocations et limiter les corrélations et expositions communes.",
-    connectionEnvVar: "OPENAI_AGENT_PORTFOLIO_ID",
+    connectionEnvVar: "OPENAI_PROMPT_PORTFOLIO_ID",
     mayExecuteOrders: false
   },
   {
@@ -119,15 +119,15 @@ export const agentCatalog: AgentDefinition[] = [
     name: "Risk Governor",
     role: "Veto",
     responsibility: "Appliquer les limites déterministes et refuser toute proposition non conforme.",
-    connectionEnvVar: "OPENAI_AGENT_RISK_ID",
+    connectionEnvVar: "OPENAI_PROMPT_RISK_ID",
     mayExecuteOrders: false
   },
   {
     key: "execution",
     name: "Execution Planner",
     role: "Ordres simulés",
-    responsibility: "Préparer le type d'ordre, le prix limite, l'expiration et le contrôle du spread.",
-    connectionEnvVar: "OPENAI_AGENT_EXECUTION_ID",
+    responsibility: "Préparer le type d’ordre simulé, le prix limite, l’expiration et le contrôle du spread.",
+    connectionEnvVar: "OPENAI_PROMPT_EXECUTION_ID",
     mayExecuteOrders: false
   },
   {
@@ -135,7 +135,7 @@ export const agentCatalog: AgentDefinition[] = [
     name: "Performance Monitor",
     role: "Surveillance",
     responsibility: "Détecter la dérive, le slippage anormal et la dégradation des stratégies.",
-    connectionEnvVar: "OPENAI_AGENT_MONITORING_ID",
+    connectionEnvVar: "OPENAI_PROMPT_MONITORING_ID",
     mayExecuteOrders: false
   },
   {
@@ -143,7 +143,7 @@ export const agentCatalog: AgentDefinition[] = [
     name: "Compliance Journal",
     role: "Audit",
     responsibility: "Conserver les versions, décisions, refus, données utilisées et résultats.",
-    connectionEnvVar: "OPENAI_AGENT_JOURNAL_ID",
+    connectionEnvVar: "OPENAI_PROMPT_JOURNAL_ID",
     mayExecuteOrders: false
   }
 ];
