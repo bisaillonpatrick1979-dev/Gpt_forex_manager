@@ -35,12 +35,12 @@ export const MasterAgentOutputSchema = z.object({
   riskConstraints: z.object({
     mode: z.literal("paper-only"),
     baseCurrency: z.literal("CAD"),
-    maxRiskPerTradePercent: z.number().max(riskPolicy.maxRiskPerTradePercent),
-    maxDailyLossPercent: z.number().max(riskPolicy.maxDailyLossPercent),
-    maxPortfolioDrawdownPercent: z.number().max(riskPolicy.maxPortfolioDrawdownPercent),
-    maxOpenPositions: z.number().int().max(riskPolicy.maxOpenPositions),
-    maxPairExposurePercent: z.number().max(riskPolicy.maxPairExposurePercent),
-    maxLeverage: z.number().max(riskPolicy.maxLeverage),
+    maxRiskPerTradePercent: z.number(),
+    maxDailyLossPercent: z.number(),
+    maxPortfolioDrawdownPercent: z.number(),
+    maxOpenPositions: z.number().int(),
+    maxPairExposurePercent: z.number(),
+    maxLeverage: z.number(),
     stopLossRequired: z.literal(true),
     independentRiskVetoRequired: z.literal(true),
     realBrokerEnabled: z.literal(false)
@@ -115,31 +115,28 @@ Retourne uniquement la structure exigée par le schéma de sortie.
 function createMasterAgent() {
   const storedPromptId = process.env.OPENAI_PROMPT_MASTER_ID?.trim();
   const storedPromptVersion = process.env.OPENAI_PROMPT_MASTER_VERSION?.trim();
-  const model = process.env.OPENAI_AGENT_MODEL || process.env.OPENAI_MODEL || "gpt-5.1";
 
-  const common = {
+  if (storedPromptId) {
+    return new Agent({
+      name: "Directeur quantitatif",
+      outputType: MasterAgentOutputSchema,
+      prompt: {
+        promptId: storedPromptId,
+        ...(storedPromptVersion ? { version: storedPromptVersion } : {})
+      },
+      modelSettings: { store: true }
+    });
+  }
+
+  return new Agent({
     name: "Directeur quantitatif",
-    model,
+    model: process.env.OPENAI_AGENT_MODEL || "gpt-5.1",
+    instructions: MASTER_AGENT_INSTRUCTIONS,
     outputType: MasterAgentOutputSchema,
     modelSettings: {
       reasoning: { effort: "medium" as const },
       store: true
     }
-  };
-
-  if (storedPromptId) {
-    return new Agent({
-      ...common,
-      prompt: {
-        promptId: storedPromptId,
-        ...(storedPromptVersion ? { version: storedPromptVersion } : {})
-      }
-    });
-  }
-
-  return new Agent({
-    ...common,
-    instructions: MASTER_AGENT_INSTRUCTIONS
   });
 }
 
@@ -159,5 +156,23 @@ export async function runMasterAgent(input: MasterAgentInput): Promise<MasterAge
     }
   });
 
-  return MasterAgentOutputSchema.parse(result.finalOutput);
+  const parsed = MasterAgentOutputSchema.parse(result.finalOutput);
+
+  return {
+    ...parsed,
+    riskConstraints: {
+      mode: riskPolicy.mode,
+      baseCurrency: riskPolicy.baseCurrency,
+      maxRiskPerTradePercent: riskPolicy.maxRiskPerTradePercent,
+      maxDailyLossPercent: riskPolicy.maxDailyLossPercent,
+      maxPortfolioDrawdownPercent: riskPolicy.maxPortfolioDrawdownPercent,
+      maxOpenPositions: riskPolicy.maxOpenPositions,
+      maxPairExposurePercent: riskPolicy.maxPairExposurePercent,
+      maxLeverage: riskPolicy.maxLeverage,
+      stopLossRequired: riskPolicy.requireStopLoss,
+      independentRiskVetoRequired: riskPolicy.requireRiskVeto,
+      realBrokerEnabled: riskPolicy.realBrokerEnabled
+    },
+    tradeDecision: "NO_TRADE_DECISION"
+  };
 }
