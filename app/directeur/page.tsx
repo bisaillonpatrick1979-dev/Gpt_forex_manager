@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Activity, ArrowLeft, RefreshCcw, ShieldCheck } from "lucide-react";
 import MasterAgentPanel from "@/components/MasterAgentPanel";
+import BacktestAuditorPanel from "@/components/BacktestAuditorPanel";
 import TradingViewCandleChart from "@/components/TradingViewCandleChart";
 import { MarketResponse } from "@/lib/types";
 import { riskPolicy } from "@/lib/firm-config";
@@ -62,8 +63,8 @@ export default function QuantDirectorPage() {
         <div>
           <a className="btn secondary compact-button" href="/"><ArrowLeft size={16} /> Retour à la firme</a>
           <div className="eyebrow director-eyebrow">Poste de commandement</div>
-          <h1 className="firm-title">Agent 01 <span>Directeur quantitatif</span></h1>
-          <p className="muted">Il prépare les mandats, sélectionne les futurs spécialistes et bloque les demandes insuffisamment documentées.</p>
+          <h1 className="firm-title">Chaîne quantitative <span>5 agents actifs</span></h1>
+          <p className="muted">Les données, le régime, les hypothèses et l’audit hostile précèdent toute future allocation ou gestion du risque.</p>
         </div>
         <div className="director-policy">
           <span className="badge buy">Paper trading seulement</span>
@@ -96,7 +97,7 @@ export default function QuantDirectorPage() {
         </div>
 
         <div className="card chart-card director-chart-card">
-          <h2><ShieldCheck size={20} /> Données transmises au Directeur</h2>
+          <h2><ShieldCheck size={20} /> Données transmises à la chaîne</h2>
           <TradingViewCandleChart candles={market?.candles || []} mode="candles" />
         </div>
       </section>
@@ -105,6 +106,13 @@ export default function QuantDirectorPage() {
         pair={pair}
         interval={interval}
         capitalCad={Math.max(1, Number(capital) || 10000)}
+        market={market}
+        apiConfigured={apiConfigured}
+      />
+
+      <BacktestAuditorPanel
+        pair={pair}
+        interval={interval}
         market={market}
         apiConfigured={apiConfigured}
       />
