@@ -27,6 +27,24 @@ const AlphaModelOutputSchema = z.object({
 
 type AlphaModelOutput = z.infer<typeof AlphaModelOutputSchema>;
 
+export type StrategyTemplateKey =
+  | "MA_TREND"
+  | "DONCHIAN_BREAKOUT"
+  | "ZSCORE_MEAN_REVERSION"
+  | "VOLATILITY_EXPANSION"
+  | "OBSERVATION_ONLY";
+
+export type ExecutableStrategyTemplate = {
+  engineCompatibility: "deterministic-backtest-v1";
+  templateKey: StrategyTemplateKey;
+  templateVersion: "1.0.0";
+  direction: "LONG_ONLY" | "SHORT_ONLY" | "BOTH" | "NEUTRAL";
+  parameters: Record<string, number>;
+  executionRule: "SIGNAL_ON_CLOSE_EXECUTE_NEXT_OPEN";
+  parameterSource: "FIXED_BY_APPLICATION_CODE";
+  description: string;
+};
+
 export type AlphaHypothesis = {
   hypothesisId: string;
   family: string;
@@ -42,6 +60,7 @@ export type AlphaHypothesis = {
   invalidationCriteria: string[];
   expectedFailureModes: string[];
   requiredData: string[];
+  executableTemplate: ExecutableStrategyTemplate;
   backtestSpecification: {
     researchOnly: true;
     liveTradingAllowed: false;
@@ -90,6 +109,7 @@ RÈGLES ABSOLUES
 - Limite chaque hypothèse à six paramètres libres maximum.
 - Les données synthétiques ou insuffisantes permettent seulement une spécification, jamais une conclusion de performance.
 - Chaque hypothèse doit pouvoir être invalidée.
+- L'application choisit ensuite un gabarit exécutable fixe; tu ne contrôles pas ses paramètres.
 - tradeDecision doit toujours être NO_TRADE_DECISION.
 
 MÉTHODE
@@ -149,6 +169,69 @@ function blockedOutput(envelope: AlphaResearchEnvelope): AlphaResearchOutput {
   };
 }
 
+function directionForRegime(envelope: AlphaResearchEnvelope): ExecutableStrategyTemplate["direction"] {
+  if (envelope.primaryRegime === "TREND_UP") return "LONG_ONLY";
+  if (envelope.primaryRegime === "TREND_DOWN") return "SHORT_ONLY";
+  if (envelope.primaryRegime === "RANGE" || envelope.primaryRegime === "LOW_VOLATILITY" || envelope.primaryRegime === "HIGH_VOLATILITY") return "BOTH";
+  return "NEUTRAL";
+}
+
+function executableTemplateForFamily(family: string, envelope: AlphaResearchEnvelope): ExecutableStrategyTemplate {
+  const normalized = family.toLocaleLowerCase("fr-CA");
+  const direction = directionForRegime(envelope);
+  const base = {
+    engineCompatibility: "deterministic-backtest-v1" as const,
+    templateVersion: "1.0.0" as const,
+    direction,
+    executionRule: "SIGNAL_ON_CLOSE_EXECUTE_NEXT_OPEN" as const,
+    parameterSource: "FIXED_BY_APPLICATION_CODE" as const
+  };
+
+  if (normalized.includes("retour à la moyenne") || normalized.includes("oscillation")) {
+    return {
+      ...base,
+      templateKey: "ZSCORE_MEAN_REVERSION",
+      parameters: { lookback: 20, entryZ: 1.25, exitZ: 0.25, maxHoldingBars: 18, stopAtr: 2.0 },
+      description: "Retour à la moyenne sur score-z, entrée au prochain open et sortie au retour vers la moyenne ou au stop ATR."
+    };
+  }
+
+  if (normalized.includes("cassure") || normalized.includes("compression")) {
+    return {
+      ...base,
+      templateKey: "DONCHIAN_BREAKOUT",
+      parameters: { entryLookback: 20, exitLookback: 10, maxHoldingBars: 24, stopAtr: 2.5 },
+      description: "Cassure des extrêmes précédents, confirmée à la clôture et exécutée au prochain open."
+    };
+  }
+
+  if (normalized.includes("suivi de tendance") || normalized.includes("moyenne mobile")) {
+    return {
+      ...base,
+      templateKey: "MA_TREND",
+      parameters: { fastPeriod: 9, slowPeriod: 21, maxHoldingBars: 30, stopAtr: 2.25 },
+      description: "Suivi de tendance par relation entre moyennes mobiles, sans optimisation des périodes."
+    };
+  }
+
+  if (normalized.includes("volatilité")) {
+    return {
+      ...base,
+      templateKey: "VOLATILITY_EXPANSION",
+      parameters: { lookback: 20, atrPeriod: 14, expansionMultiplier: 1.2, maxHoldingBars: 12, stopAtr: 2.5 },
+      description: "Expansion de volatilité avec cassure du canal précédent et filtre d'amplitude ATR."
+    };
+  }
+
+  return {
+    ...base,
+    templateKey: "OBSERVATION_ONLY",
+    direction: "NEUTRAL",
+    parameters: {},
+    description: "Hypothèse d'observation non traduisible en ordre simulé avec les gabarits déterministes actuels."
+  };
+}
+
 function mapHypotheses(modelOutput: AlphaModelOutput, envelope: AlphaResearchEnvelope) {
   let rejectedHypothesisCount = 0;
   const hypotheses: AlphaHypothesis[] = [];
@@ -160,11 +243,13 @@ function mapHypotheses(modelOutput: AlphaModelOutput, envelope: AlphaResearchEnv
       return;
     }
 
+    const executableTemplate = executableTemplateForFamily(family, envelope);
+
     hypotheses.push({
       hypothesisId: `HYP-${String(index + 1).padStart(2, "0")}`,
       family,
       title: hypothesis.title,
-      directionalBias: hypothesis.directionalBias,
+      directionalBias: executableTemplate.direction,
       economicIntuition: hypothesis.economicIntuition,
       marketCondition: hypothesis.marketCondition,
       candidateCondition: hypothesis.candidateCondition,
@@ -175,6 +260,7 @@ function mapHypotheses(modelOutput: AlphaModelOutput, envelope: AlphaResearchEnv
       invalidationCriteria: hypothesis.invalidationCriteria.slice(0, 8),
       expectedFailureModes: hypothesis.expectedFailureModes.slice(0, 8),
       requiredData: hypothesis.requiredData.slice(0, 10),
+      executableTemplate,
       backtestSpecification: {
         researchOnly: true,
         liveTradingAllowed: false,
